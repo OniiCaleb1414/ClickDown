@@ -1,7 +1,40 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-const STORAGE_KEY = "up_acaddesk_v3";
+// ─── Supabase config ─────────────────────────────────────────────────────────
+const SB_URL  = "https://qtjlnvubejdasgfaeiic.supabase.co";
+const SB_KEY  = "sb_publishable_m_H7ZdvVToxSrNz7et8olw_uQ_404H6";
+const SB_HEADERS = {
+  "Content-Type": "application/json",
+  "apikey": SB_KEY,
+  "Authorization": `Bearer ${SB_KEY}`,
+  "Prefer": "return=representation",
+};
+
+// ─── Supabase helpers ─────────────────────────────────────────────────────────
+async function sbLoad() {
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/acaddesk?id=eq.main&select=data`, { headers: SB_HEADERS });
+    const rows = await r.json();
+    if (rows?.[0]?.data?.modules) return rows[0].data;
+  } catch(e) { console.warn("Supabase load failed, using local:", e); }
+  // Fallback to localStorage if offline
+  try { const r = localStorage.getItem("acaddesk_cache"); return r ? JSON.parse(r) : null; } catch { return null; }
+}
+
+async function sbSave(data) {
+  // Always cache locally for offline resilience
+  try { localStorage.setItem("acaddesk_cache", JSON.stringify(data)); } catch {}
+  try {
+    await fetch(`${SB_URL}/rest/v1/acaddesk?id=eq.main`, {
+      method: "PATCH",
+      headers: { ...SB_HEADERS, "Prefer": "return=minimal" },
+      body: JSON.stringify({ data, updated_at: new Date().toISOString() })
+    });
+  } catch(e) { console.warn("Supabase save failed:", e); }
+}
+
+const STORAGE_KEY = "up_acaddesk_v3"; // kept for extension compat
 
 const PLATFORMS = {
   clickup: { label: "ClickUP", color: "#7C6AF7", bg: "#7C6AF718", icon: "◈", placeholder: "https://clickup.up.ac.za/..." },
@@ -14,36 +47,115 @@ const MODULE_COLORS = ["#7C6AF7","#F76A6A","#4ECDC4","#F7A84A","#A8E063","#F76AD
 const DEFAULT_DATA = {
   todos: [],
   modules: [
-    { id:"m1", code:"COS301", name:"Software Engineering",          color:"#7C6AF7", passMark:50, assignments:[
-      { id:"a1",  name:"Mini Project Phase 1", weight:15, mark:null, dueDate:"2025-03-20", link:"https://clickup.up.ac.za", platform:"clickup", notes:"UML diagrams + requirements doc", done:false },
-      { id:"a2",  name:"Mini Project Phase 2", weight:20, mark:null, dueDate:"2025-04-18", link:"",                          platform:"clickup", notes:"Architecture & design patterns",  done:false },
-      { id:"a3",  name:"Test 1",               weight:25, mark:72,   dueDate:"2025-03-10", link:"",                          platform:"clickup", notes:"Chapters 1–5",                    done:true  },
-      { id:"a4",  name:"Exam",                 weight:40, mark:null, dueDate:"2025-06-10", link:"",                          platform:"clickup", notes:"",                               done:false },
-    ]},
-    { id:"m2", code:"COS326", name:"Functional Programming",        color:"#F76A6A", passMark:50, assignments:[
-      { id:"a5",  name:"Haskell Assignment 1", weight:10, mark:85,   dueDate:"2025-03-05", link:"",                          platform:"clickup", notes:"Higher order functions",          done:true  },
-      { id:"a6",  name:"Haskell Assignment 2", weight:15, mark:null, dueDate:"2025-04-02", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Monads & type classes",           done:false },
-      { id:"a7",  name:"Test 1",               weight:25, mark:null, dueDate:"2025-03-28", link:"",                          platform:"clickup", notes:"",                               done:false },
-      { id:"a8",  name:"Exam",                 weight:50, mark:null, dueDate:"2025-06-15", link:"",                          platform:"clickup", notes:"",                               done:false },
-    ]},
-    { id:"m3", code:"COS332", name:"Computer Networks",             color:"#4ECDC4", passMark:50, assignments:[
-      { id:"a9",  name:"Practical 1",          weight:10, mark:78,   dueDate:"2025-03-07", link:"",                          platform:"clickup", notes:"Wireshark analysis",             done:true  },
-      { id:"a10", name:"Test 1",               weight:20, mark:null, dueDate:"2025-03-25", link:"",                          platform:"clickup", notes:"OSI layers, TCP/IP",             done:false },
-      { id:"a11", name:"Practical 2",          weight:10, mark:null, dueDate:"2025-04-10", link:"",                          platform:"clickup", notes:"",                               done:false },
-      { id:"a12", name:"Exam",                 weight:60, mark:null, dueDate:"2025-06-12", link:"",                          platform:"clickup", notes:"",                               done:false },
-    ]},
-    { id:"m4", code:"EBN",    name:"Engineering Business & Networks",color:"#F7A84A", passMark:50, assignments:[
-      { id:"a13", name:"Practical 1",          weight:10, mark:null, dueDate:"2025-03-22", link:"https://ams.up.ac.za",      platform:"ams",     notes:"Submit via AMS portal",         done:false },
-      { id:"a14", name:"Assignment 1",         weight:15, mark:null, dueDate:"2025-04-05", link:"https://ams.up.ac.za",      platform:"ams",     notes:"Check AMS for rubric & feedback",done:false },
-      { id:"a15", name:"Test 1",               weight:25, mark:null, dueDate:"2025-04-01", link:"",                          platform:"clickup", notes:"",                               done:false },
-      { id:"a16", name:"Exam",                 weight:50, mark:null, dueDate:"2025-06-18", link:"",                          platform:"clickup", notes:"",                               done:false },
-    ]},
+    // ── COS 212 — Data Structures & Algorithms ─────────────────────────────
+    // Assessments from Gradebook (sync via extension for exact dates/marks)
+    { id:"m1", code:"COS212", name:"Data Structures & Algorithms", color:"#7C6AF7", passMark:50,
+      assignments:[
+        { id:"a1",  name:"Tutorial 1 Test",   weight:3,  mark:null, dueDate:"2026-02-20", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/gradebook", platform:"clickup", notes:"Formative — sync from Gradebook for exact mark", done:false },
+        { id:"a2",  name:"Tutorial 2 Test",   weight:3,  mark:null, dueDate:"2026-02-27", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/gradebook", platform:"clickup", notes:"Formative", done:false },
+        { id:"a3",  name:"Tutorial 3 Test",   weight:3,  mark:null, dueDate:"2026-03-06", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/gradebook", platform:"clickup", notes:"Formative", done:false },
+        { id:"a4",  name:"Practical 1",       weight:10, mark:null, dueDate:"2026-03-07", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/gradebook", platform:"clickup", notes:"Sync from Gradebook for mark", done:false },
+        { id:"a5",  name:"Practical 2",       weight:10, mark:null, dueDate:"2026-04-10", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/gradebook", platform:"clickup", notes:"", done:false },
+        { id:"a6",  name:"Semester Test 1",   weight:25, mark:null, dueDate:"2026-04-01", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/gradebook", platform:"clickup", notes:"Check ClickUP for exact date", done:false },
+        { id:"a7",  name:"Exam",              weight:50, mark:null, dueDate:"2026-06-01", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/gradebook", platform:"clickup", notes:"", done:false },
+      ]
+    },
+
+    // ── EBN 111 — Electricity & Electronics ────────────────────────────────
+    // Final mark: Semester mark 50% + Exam 50%
+    // Semester mark: ST1 35% + ST2 35% + Assignments 6% + Class Tests 12% + Practicals 12%
+    // As % of FINAL: ST1≈17.5%, ST2≈17.5%, Exam=50%, rest small
+    { id:"m2", code:"EBN111", name:"Electricity & Electronics", color:"#F7A84A", passMark:50,
+      assignments:[
+        { id:"b1",  name:"AMS Assignment 1",    weight:1, mark:null, dueDate:"2026-02-16", link:"https://ams.up.ac.za", platform:"ams", notes:"Ch 1 — Units, Charge, Current, Voltage", done:false },
+        { id:"b2",  name:"Pre-Practical 1",     weight:1, mark:null, dueDate:"2026-02-20", link:"https://ams.up.ac.za", platform:"ams", notes:"Submit on AMS before Practical 1", done:false },
+        { id:"b3",  name:"AMS Assignment 2",    weight:1, mark:null, dueDate:"2026-02-23", link:"https://ams.up.ac.za", platform:"ams", notes:"Ch 2 — Kirchhoff's Law", done:false },
+        { id:"b4",  name:"AMS Assignment 3",    weight:1, mark:null, dueDate:"2026-03-02", link:"https://ams.up.ac.za", platform:"ams", notes:"Ch 3 — Nodal Analysis", done:false },
+        { id:"b5",  name:"AMS Assignment 4",    weight:1, mark:null, dueDate:"2026-03-09", link:"https://ams.up.ac.za", platform:"ams", notes:"Ch 3 — Mesh Analysis", done:false },
+        { id:"b6",  name:"Class Test 1",        weight:6, mark:null, dueDate:"2026-03-06", link:"https://ams.up.ac.za", platform:"ams", notes:"Chapters 1, 2, 3.2–3.3", done:false },
+        { id:"b7",  name:"AMS Assignment 5",    weight:1, mark:null, dueDate:"2026-03-16", link:"https://ams.up.ac.za", platform:"ams", notes:"Ch 4 — Superposition", done:false },
+        { id:"b8",  name:"Semester Test 1",     weight:18, mark:null, dueDate:"2026-03-18", link:"https://ams.up.ac.za", platform:"ams", notes:"Week of 16–20 Mar. Chapters 1–3 & 4.2–4.4", done:false },
+        { id:"b9",  name:"Practical 1",         weight:2, mark:null, dueDate:"2026-03-06", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Turning on an LED in a resistor network", done:false },
+        { id:"b10", name:"AMS Assignment 6",    weight:1, mark:null, dueDate:"2026-03-30", link:"https://ams.up.ac.za", platform:"ams", notes:"Ch 4 — Norton's Theorem", done:false },
+        { id:"b11", name:"Pre-Practical 2",     weight:1, mark:null, dueDate:"2026-04-10", link:"https://ams.up.ac.za", platform:"ams", notes:"Submit on AMS before Practical 2", done:false },
+        { id:"b12", name:"AMS Assignment 7",    weight:1, mark:null, dueDate:"2026-04-13", link:"https://ams.up.ac.za", platform:"ams", notes:"Ch 5 — Op Amps", done:false },
+        { id:"b13", name:"Class Test 2",        weight:6, mark:null, dueDate:"2026-04-28", link:"https://ams.up.ac.za", platform:"ams", notes:"Chapters 4–6", done:false },
+        { id:"b14", name:"Pre-Practical 3",     weight:1, mark:null, dueDate:"2026-04-27", link:"https://ams.up.ac.za", platform:"ams", notes:"Submit on AMS before Practical 3", done:false },
+        { id:"b15", name:"Practical 2",         weight:2, mark:null, dueDate:"2026-04-10", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Using a transistor as a switch", done:false },
+        { id:"b16", name:"AMS Assignment 8",    weight:1, mark:null, dueDate:"2026-04-27", link:"https://ams.up.ac.za", platform:"ams", notes:"", done:false },
+        { id:"b17", name:"Semester Test 2",     weight:18, mark:null, dueDate:"2026-05-06", link:"https://ams.up.ac.za", platform:"ams", notes:"Week of 4–8 May. Chapters 4, 5, 6 & 9", done:false },
+        { id:"b18", name:"Practical 3",         weight:2, mark:null, dueDate:"2026-05-08", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Using an op-amp to turn on an LED", done:false },
+        { id:"b19", name:"AMS Assignment 9",    weight:1, mark:null, dueDate:"2026-05-18", link:"https://ams.up.ac.za", platform:"ams", notes:"", done:false },
+        { id:"b20", name:"Exam",                weight:50, mark:null, dueDate:"2026-06-10", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Closed book. Min 40% required to pass", done:false },
+      ]
+    },
+
+    // ── EJJ 210 — Engineering Communication ────────────────────────────────
+    // No exam — semester mark = 100%
+    // Tutorials 1-6: 7.5% each = 45%, Tutorials 8&10: 15% each = 30%, Oral: 15%, Homework: 10%
+    { id:"m3", code:"EJJ210", name:"Engineering Communication", color:"#4ECDC4", passMark:50,
+      assignments:[
+        { id:"c1",  name:"Homework 1",        weight:2,  mark:null, dueDate:"2026-02-16", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU1 — Non-session assignment", done:false },
+        { id:"c2",  name:"Tutorial 1",        weight:8,  mark:null, dueDate:"2026-02-16", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU1 — Session-based, rubric marked", done:false },
+        { id:"c3",  name:"Homework 2",        weight:2,  mark:null, dueDate:"2026-02-23", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU2", done:false },
+        { id:"c4",  name:"Tutorial 2",        weight:8,  mark:null, dueDate:"2026-02-23", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU2 — Oral presentation prep", done:false },
+        { id:"c5",  name:"Oral Presentation", weight:15, mark:null, dueDate:"2026-03-20", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Slots: 20 Mar or 5 May. Min 40% required", done:false },
+        { id:"c6",  name:"Tutorial 3",        weight:8,  mark:null, dueDate:"2026-03-09", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU3", done:false },
+        { id:"c7",  name:"Tutorial 4",        weight:8,  mark:null, dueDate:"2026-03-23", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU4", done:false },
+        { id:"c8",  name:"Tutorial 5",        weight:8,  mark:null, dueDate:"2026-04-13", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU4", done:false },
+        { id:"c9",  name:"Tutorial 6",        weight:8,  mark:null, dueDate:"2026-04-20", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU5", done:false },
+        { id:"c10", name:"Tutorial 7",        weight:0,  mark:null, dueDate:"2026-04-27", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU6 — Attendance only, no mark", done:false },
+        { id:"c11", name:"Tutorial 8",        weight:15, mark:null, dueDate:"2026-05-04", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU6 — Rubric marked. Min avg 40% for T8&T10", done:false },
+        { id:"c12", name:"Tutorial 9",        weight:0,  mark:null, dueDate:"2026-05-11", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU7 — Attendance only", done:false },
+        { id:"c13", name:"Tutorial 10",       weight:15, mark:null, dueDate:"2026-05-18", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU7 — Rubric marked. Min avg 40% for T8&T10", done:false },
+      ]
+    },
+
+    // ── JCP 203 — Physics (Year module) ────────────────────────────────────
+    // Placeholders — no study guide provided yet
+    { id:"m4", code:"JCP203", name:"Physics", color:"#F76A6A", passMark:50,
+      assignments:[
+        { id:"d1", name:"Semester Test 1", weight:25, mark:null, dueDate:"2026-03-20", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Update dates from study guide", done:false },
+        { id:"d2", name:"Semester Test 2", weight:25, mark:null, dueDate:"2026-08-01", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Semester 2 — update date", done:false },
+        { id:"d3", name:"Exam",            weight:50, mark:null, dueDate:"2026-11-01", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Year module — June or Nov exam", done:false },
+      ]
+    },
+
+    // ── JSU 110 — (no study guide yet) ─────────────────────────────────────
+    { id:"m5", code:"JSU110", name:"JSU 110", color:"#A8E063", passMark:50,
+      assignments:[
+        { id:"e1", name:"Semester Test 1", weight:30, mark:null, dueDate:"2026-03-20", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Update from study guide", done:false },
+        { id:"e2", name:"Semester Test 2", weight:30, mark:null, dueDate:"2026-05-08", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Update from study guide", done:false },
+        { id:"e3", name:"Exam",            weight:40, mark:null, dueDate:"2026-06-10", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Update from study guide", done:false },
+      ]
+    },
+
+    // ── NMC 113 — Materials Science & Engineering ───────────────────────────
+    // Final mark: Semester mark 50% + Exam 50%
+    // SM breakdown: Semester tests 60% (30% each) + Lab 10% + Class tests 10% + Tutorials 10% + Wiley Plus 10%
+    // As % of FINAL: ST1=15%, ST2=15%, Lab=5%, ClassTests=5%, Tutorials=5%, WileyPlus=5%, Exam=50%
+    { id:"m6", code:"NMC113", name:"Materials Science & Engineering", color:"#F76AD3", passMark:50,
+      assignments:[
+        { id:"f1", name:"Wiley Plus (Online)",  weight:5,  mark:null, dueDate:"2026-05-22", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Continuous online assessment — 10% of SM", done:false },
+        { id:"f2", name:"Class Test 1",         weight:3,  mark:null, dueDate:"2026-03-13", link:"https://clickup.up.ac.za", platform:"clickup", notes:"During lecture. 10% of SM total for class tests", done:false },
+        { id:"f3", name:"Class Test 2",         weight:3,  mark:null, dueDate:"2026-04-24", link:"https://clickup.up.ac.za", platform:"clickup", notes:"During lecture", done:false },
+        { id:"f4", name:"Practical 1",          weight:1,  mark:null, dueDate:"2026-03-06", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Lab — Room 4-19 Mineral Sciences. Min 50% avg for all labs", done:false },
+        { id:"f5", name:"Practical 2",          weight:1,  mark:null, dueDate:"2026-03-27", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Lab", done:false },
+        { id:"f6", name:"Practical 3",          weight:1,  mark:null, dueDate:"2026-04-17", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Lab", done:false },
+        { id:"f7", name:"Practical 4",          weight:2,  mark:null, dueDate:"2026-05-08", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Lab — last practical", done:false },
+        { id:"f8", name:"Tutorial Classes",     weight:5,  mark:null, dueDate:"2026-05-22", link:"https://clickup.up.ac.za", platform:"clickup", notes:"10% of SM — ongoing throughout semester", done:false },
+        { id:"f9", name:"Semester Test 1",      weight:15, mark:null, dueDate:"2026-03-20", link:"https://clickup.up.ac.za", platform:"clickup", notes:"90 min. 30% of SM = 15% of final", done:false },
+        { id:"f10",name:"Semester Test 2",      weight:15, mark:null, dueDate:"2026-05-05", link:"https://clickup.up.ac.za", platform:"clickup", notes:"90 min. 30% of SM = 15% of final", done:false },
+        { id:"f11",name:"Exam",                 weight:50, mark:null, dueDate:"2026-06-10", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Min 40% exam mark required to pass", done:false },
+      ]
+    },
   ],
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-const loadData  = () => { try { const r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : DEFAULT_DATA; } catch { return DEFAULT_DATA; } };
-const saveData  = d  => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {} };
+// loadData — sync fallback only (actual load happens async in useEffect)
+const loadData  = () => { try { const r = localStorage.getItem("acaddesk_cache"); return r ? JSON.parse(r) : DEFAULT_DATA; } catch { return DEFAULT_DATA; } };
+const saveData  = d  => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {} }; // kept for extension
 const daysUntil = ds => Math.ceil((new Date(ds) - new Date()) / 86400000);
 const urgColor  = d  => d < 0 ? "#666" : d <= 3 ? "#F76A6A" : d <= 7 ? "#F7C56A" : "#4ECDC4";
 const fmtDate   = ds => new Date(ds).toLocaleDateString("en-ZA", { day:"numeric", month:"short" });
@@ -256,16 +368,69 @@ export default function App() {
     return () => window.removeEventListener("resize", handler);
   }, []);
 
-  // Persist on every data change (real-time save)
-  useEffect(() => { saveData(data); }, [data]);
+  // ── Supabase: initial load ────────────────────────────────────────────────
+  const [syncStatus, setSyncStatus] = useState("loading"); // "loading"|"live"|"offline"
+  const saveTimer   = useRef(null);
+  const isRemote    = useRef(false); // flag to skip save when change came from remote
 
-  // Listen for external writes (e.g. browser extension syncing data in)
+  useEffect(() => {
+    sbLoad().then(remote => {
+      if (remote?.modules) {
+        setData(remote);
+        setSyncStatus("live");
+      } else {
+        setSyncStatus("offline");
+      }
+    });
+  }, []);
+
+  // ── Supabase: save on every data change (debounced 800ms) ────────────────
+  useEffect(() => {
+    if (isRemote.current) { isRemote.current = false; return; }
+    // Also write to localStorage so extension can still read it
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      sbSave(data).then(() => setSyncStatus("live")).catch(() => setSyncStatus("offline"));
+    }, 800);
+    return () => clearTimeout(saveTimer.current);
+  }, [data]);
+
+  // ── Supabase: realtime subscription (long-poll every 5s) ─────────────────
+  // Supabase realtime requires the client library; we use a lightweight polling approach instead
+  useEffect(() => {
+    let interval = setInterval(async () => {
+      try {
+        const r = await fetch(
+          `${SB_URL}/rest/v1/acaddesk?id=eq.main&select=data,updated_at`,
+          { headers: SB_HEADERS }
+        );
+        const rows = await r.json();
+        const remote = rows?.[0];
+        if (!remote?.data?.modules) return;
+        // Only update if remote is newer than our last save
+        const remoteTime = new Date(remote.updated_at).getTime();
+        const localTime  = new Date(window._lastSave || 0).getTime();
+        if (remoteTime > localTime + 1000) {
+          isRemote.current = true;
+          setData(remote.data);
+          setSyncStatus("live");
+        }
+      } catch { setSyncStatus("offline"); }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Track our own save time so we don't loop
+  useEffect(() => { window._lastSave = new Date().toISOString(); }, [data]);
+
+  // ── Extension writes (localStorage) ──────────────────────────────────────
   useEffect(() => {
     const handler = (e) => {
       if (e.key === STORAGE_KEY && e.newValue) {
         try {
           const incoming = JSON.parse(e.newValue);
-          if (incoming?.modules) setData(incoming);
+          if (incoming?.modules) { setData(incoming); sbSave(incoming); }
         } catch {}
       }
     };
@@ -403,6 +568,12 @@ export default function App() {
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <div style={{width:26,height:26,borderRadius:7,background:"linear-gradient(135deg,#7C6AF7,#F7A84A)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"white",fontFamily:"Syne,sans-serif",flexShrink:0}}>UP</div>
           <span style={{fontFamily:"Syne,sans-serif",fontWeight:800,fontSize:14,letterSpacing:.3}}>AcadDesk</span>
+          <span title={syncStatus==="live"?"Synced":syncStatus==="loading"?"Connecting...":"Offline — changes saved locally"} style={{
+            width:7, height:7, borderRadius:"50%", flexShrink:0,
+            background: syncStatus==="live"?"#4ECDC4": syncStatus==="loading"?"#F7A84A":"#F76A6A",
+            boxShadow: syncStatus==="live"?"0 0 6px #4ECDC4":"none",
+            transition:"background .5s"
+          }}/>
           {activeM && mod && !isMobile && <>
             <span style={{color:"#333",margin:"0 4px"}}>/</span>
             <span style={{fontSize:12,color:mod.color,fontWeight:600}}>{mod.code}</span>
