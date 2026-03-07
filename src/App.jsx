@@ -87,18 +87,18 @@ function FilterBar({modules, filters, setFilters, isMobile}){
   };
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
-      {/* Module filter — horizontal scroll */}
-      <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:2}}>
+    <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16,width:"100%",maxWidth:"100%",overflow:"hidden"}}>
+      {/* Module filter — horizontal scroll, clipped to viewport */}
+      <div className="hide-scroll" style={{display:"flex",gap:6,overflowX:"auto",overflowY:"hidden",paddingBottom:2,width:"100%",WebkitOverflowScrolling:"touch"}}>
         {pill("module","all","All modules")}
         {modules.map(m=>pill("module",m.id,m.code,m.color))}
       </div>
-      {/* Deadline + Weight + Platform */}
-      <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:2}}>
+      {/* Deadline + Weight + Platform — scrollable row */}
+      <div className="hide-scroll" style={{display:"flex",gap:6,overflowX:"auto",overflowY:"hidden",paddingBottom:2,width:"100%",WebkitOverflowScrolling:"touch"}}>
         {DEADLINE_OPTS.map(o=>pill("deadline",o.v,o.l))}
-        <span style={{color:"#2a2a2e",alignSelf:"center",margin:"0 2px"}}>|</span>
+        <span style={{color:"#2a2a2e",alignSelf:"center",margin:"0 2px",flexShrink:0}}>|</span>
         {WEIGHT_OPTS.map(o=>pill("weight",o.v,o.l))}
-        <span style={{color:"#2a2a2e",alignSelf:"center",margin:"0 2px"}}>|</span>
+        <span style={{color:"#2a2a2e",alignSelf:"center",margin:"0 2px",flexShrink:0}}>|</span>
         {PLATFORM_OPTS.map(o=>pill("platform",o.v,o.l))}
       </div>
     </div>
@@ -337,9 +337,9 @@ export default function App() {
 
   // ── Styles ──────────────────────────────────────────────────────────────────
   const s = {
-    page:    { fontFamily:"'DM Mono','Fira Code',monospace", background:"#0A0A0C", minHeight:"100%", color:"#E0E0DE" },
-    header:  { borderBottom:"1px solid #1c1c20", padding:"0 32px", display:"flex", alignItems:"center", justifyContent:"space-between", height:56, position:"sticky", top:0, background:"#0A0A0C", zIndex:100 },
-    content: { padding: isMobile ? "16px 14px 100px" : "28px 40px 48px" },
+    page:    { fontFamily:"'DM Mono','Fira Code',monospace", background:"#0A0A0C", color:"#E0E0DE", overflowX:"hidden", width:"100%", maxWidth:"100vw" },
+    header:  { borderBottom:"1px solid #1c1c20", padding: isMobile ? "0 14px" : "0 32px", display:"flex", alignItems:"center", justifyContent:"space-between", height:52, position:"sticky", top:0, background:"#0A0A0C", zIndex:100, width:"100%", maxWidth:"100vw", boxSizing:"border-box" },
+    content: { padding: isMobile ? "14px 12px 100px" : "28px 40px 48px", width:"100%", maxWidth:"100vw", overflowX:"hidden", boxSizing:"border-box" },
     card:    { background:"#131315", border:"1px solid #1e1e22", borderRadius:12, padding: isMobile ? 14 : 22 },
     sectionLabel: { fontSize:10, color:"#555", letterSpacing:1.2, marginBottom:12, fontWeight:600 },
     btn:     (bg,col,border) => ({ padding:"8px 16px", borderRadius:8, fontSize:12, fontFamily:"inherit", background:bg, color:col, border:`1px solid ${border}`, cursor:"pointer", fontWeight:600, transition:"all .15s" }),
@@ -350,6 +350,10 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@600;700;800&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
+        html { overflow-x: hidden; overflow-y: auto; max-width: 100vw; height: 100%; background: #0A0A0C; }
+        body { overflow-x: hidden; overflow-y: auto; width: 100%; max-width: 100vw; height: auto; min-height: 100%; background: #0A0A0C; margin: 0; }
+        #root { min-height: 100dvh; height: auto; width: 100vw; max-width: 100vw; overflow-x: hidden; background: #0A0A0C; }
+        .hide-scroll::-webkit-scrollbar { display: none; }
         ::-webkit-scrollbar { width: 3px; height: 3px; }
         ::-webkit-scrollbar-track { background: #111; }
         ::-webkit-scrollbar-thumb { background: #2a2a2e; border-radius: 2px; }
@@ -375,9 +379,7 @@ export default function App() {
           </>}
         </div>
         {isMobile ? (
-          <button onClick={()=>setNavOpen(v=>!v)} style={{background:"none",border:"1px solid #2a2a2e",color:"#888",padding:"5px 10px",borderRadius:7,fontSize:12,fontFamily:"inherit",cursor:"pointer"}}>
-            {navOpen?"✕":"☰ Menu"}
-          </button>
+  <div/>
         ) : (
           <div style={{display:"flex",gap:2}}>
             {[["dashboard","Dashboard"],["calendar","Timeline"],["grades","Grades"]].map(([v,l])=>(
@@ -387,15 +389,7 @@ export default function App() {
         )}
       </div>
 
-      {/* Mobile nav dropdown */}
-      {isMobile && navOpen && (
-        <div style={{background:"#131315",borderBottom:"1px solid #1e1e22",padding:"8px 14px",display:"flex",flexDirection:"column",gap:4,position:"sticky",top:52,zIndex:99}}>
-          {[["dashboard","Dashboard"],["calendar","Timeline"],["grades","Grades"]].map(([v,l])=>(
-            <button key={v} onClick={()=>goTo(v)} style={{padding:"10px 12px",borderRadius:8,fontSize:13,fontFamily:"inherit",background:view===v?"#1e1e22":"transparent",color:view===v?"#E0E0DE":"#666",border:"none",cursor:"pointer",textAlign:"left"}}>{l}</button>
-          ))}
-          {activeM && <button onClick={()=>{setActiveM(null);setNavOpen(false);}} style={{padding:"10px 12px",borderRadius:8,fontSize:12,fontFamily:"inherit",background:"transparent",color:"#888",border:"none",cursor:"pointer",textAlign:"left"}}>← Back to Dashboard</button>}
-        </div>
-      )}
+
 
       <div style={s.content}>
 
@@ -414,11 +408,11 @@ export default function App() {
           {/* Today's Tasks */}
           <TodayTasks todos={data.todos||[]} onAdd={addTodo} onToggle={toggleTodo} onDelete={deleteTodo} isMobile={isMobile} card={s.card} sectionLabel={s.sectionLabel}/>
 
-          {/* Two-column layout on desktop */}
-          <div style={{display:"grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(340px,400px) 1fr", gap:20, alignItems:"start"}}>
+          {/* Responsive layout — single col mobile, two col desktop */}
+          <div style={isMobile ? {display:"flex",flexDirection:"column",gap:16,width:"100%"} : {display:"grid",gridTemplateColumns:"380px 1fr",gap:24,alignItems:"start",width:"100%"}}>
 
-          {/* LEFT: Upcoming deadlines */}
-          <div style={{...s.card, minWidth:0}}>
+          {/* LEFT col: Upcoming deadlines */}
+          <div style={{...s.card, minWidth:0, width:"100%", overflow:"hidden"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
               <p style={s.sectionLabel}>UPCOMING DEADLINES {filteredUpcoming.length!==upcomingAll.length&&`(${filteredUpcoming.length}/${upcomingAll.length})`}</p>
               {filters.module!=="all"||filters.deadline!=="all"||filters.weight!=="all"||filters.platform!=="all"
@@ -456,9 +450,9 @@ export default function App() {
           </div>
 
           {/* RIGHT: Module cards */}
-          <div>
+          <div style={{minWidth:0, width:"100%"}}>
           <p style={{...s.sectionLabel, marginBottom:12}}>MODULES</p>
-          <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill,minmax(240px,1fr))",gap:12,marginBottom:12}}>
+          <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill,minmax(220px,1fr))",gap:12,marginBottom:12,width:"100%"}}>
             {data.modules.map(m=>{
               const grade   = calcGrade(m.assignments);
               const pending = m.assignments.filter(a=>!a.done).length;
@@ -676,7 +670,7 @@ export default function App() {
 
       {/* Mobile bottom nav */}
       {isMobile && (
-        <div style={{position:"fixed",bottom:0,left:0,right:0,background:"#0F0F12",borderTop:"1px solid #1c1c20",display:"flex",zIndex:100,paddingBottom:"env(safe-area-inset-bottom,0px)"}}>
+        <div style={{position:"fixed",bottom:0,left:0,right:0,width:"100%",background:"#0F0F12",borderTop:"1px solid #1c1c20",display:"flex",zIndex:100,paddingBottom:"env(safe-area-inset-bottom,0px)"}}>
           {[["dashboard","⊞","Home"],["calendar","◷","Timeline"],["grades","◎","Grades"]].map(([v,icon,l])=>(
             <button key={v} onClick={()=>goTo(v)} style={{flex:1,padding:"10px 0 12px",background:"none",border:"none",cursor:"pointer",color:view===v?"#7C6AF7":"#555",fontSize:9,fontFamily:"inherit",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
               <span style={{fontSize:18,lineHeight:1}}>{icon}</span>{l}
