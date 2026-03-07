@@ -547,6 +547,18 @@ export default function App() {
             </div>
           )}
 
+          {/* Daily tasks for this module */}
+          <ModuleTodayTasks
+            todos={(data.todos||[]).filter(t=>t.moduleId===mod.id)}
+            mod={mod}
+            onAdd={(text)=>addTodo(text, mod.id)}
+            onToggle={toggleTodo}
+            onDelete={deleteTodo}
+            isMobile={isMobile}
+            card={s.card}
+            sectionLabel={s.sectionLabel}
+          />
+
           {/* Grade summary */}
           <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:10,marginBottom:18}}>
             {[50,60,75].map(t=>{
@@ -889,6 +901,141 @@ function TodayTasks({ todos, modules, onAdd, onToggle, onDelete, isMobile, card,
         <p style={{color:"#333", fontSize:12, padding:"4px 0"}}>
           No tasks yet — add one above ↑
         </p>
+      )}
+    </div>
+  );
+}
+
+// ─── Module Daily Tasks (shown at top of module detail page) ──────────────────
+function ModuleTodayTasks({ todos, mod, onAdd, onToggle, onDelete, isMobile, card, sectionLabel }) {
+  const [input, setInput]   = useState("");
+  const [expanded, setExpanded] = useState(true);
+
+  const pending   = todos.filter(t => !t.done);
+  const completed = todos.filter(t => t.done);
+  const today     = new Date().toISOString().slice(0,10);
+  const isNew     = (t) => (t.createdAt||"").slice(0,10) === today;
+
+  const handleAdd = () => {
+    if (!input.trim()) return;
+    onAdd(input);
+    setInput("");
+  };
+
+  return (
+    <div style={{
+      marginBottom: 18,
+      borderRadius: 12,
+      border: `1px solid ${mod.color}33`,
+      borderLeft: `3px solid ${mod.color}`,
+      background: "#131315",
+      overflow: "hidden",
+    }}>
+      {/* Header — always visible, click to collapse */}
+      <div
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: isMobile ? "11px 14px" : "13px 18px",
+          cursor: "pointer", userSelect: "none",
+        }}>
+        <div style={{display:"flex", alignItems:"center", gap:8}}>
+          <span style={{fontSize:10, color:mod.color, fontWeight:700, letterSpacing:1.2}}>
+            TODAY'S TASKS
+          </span>
+          {pending.length > 0 && (
+            <span style={{
+              background: mod.color+"22", color: mod.color,
+              fontSize:10, fontWeight:700, padding:"1px 7px",
+              borderRadius:10, border:`1px solid ${mod.color}33`
+            }}>{pending.length}</span>
+          )}
+          {completed.length > 0 && (
+            <span style={{fontSize:10, color:"#555"}}>{completed.length} done</span>
+          )}
+        </div>
+        <span style={{fontSize:12, color:"#555"}}>{expanded ? "▲" : "▼"}</span>
+      </div>
+
+      {expanded && (
+        <div style={{padding: isMobile ? "0 14px 14px" : "0 18px 16px"}}>
+
+          {/* Add input */}
+          <div style={{
+            display:"flex", gap:8, marginBottom: todos.length > 0 ? 12 : 0,
+            flexDirection: isMobile ? "column" : "row"
+          }}>
+            <input
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleAdd()}
+              placeholder={`Add a task for ${mod.code} today...`}
+              style={{
+                flex:1, background:"#0d0d0f", border:"1px solid #2a2a2e",
+                color:"#E0E0DE", padding:"8px 12px", borderRadius:8,
+                fontFamily:"inherit", fontSize:12, outline:"none",
+                width: isMobile ? "100%" : "auto"
+              }}
+            />
+            <button onClick={handleAdd} style={{
+              padding:"8px 16px", borderRadius:8,
+              background: mod.color+"22", color: mod.color,
+              border:`1px solid ${mod.color}44`,
+              fontFamily:"inherit", fontSize:12, fontWeight:600,
+              cursor:"pointer", whiteSpace:"nowrap", flexShrink:0
+            }}>+ Add</button>
+          </div>
+
+          {/* Pending */}
+          {pending.map(t => (
+            <div key={t.id} style={{
+              display:"flex", alignItems:"center", gap:10,
+              padding:"8px 12px", background:"#0d0d0f", borderRadius:8,
+              border:"1px solid #1e1e22", marginBottom:6
+            }}>
+              <input type="checkbox" checked={false} onChange={() => onToggle(t.id)}
+                style={{width:15, height:15, accentColor:mod.color, cursor:"pointer", flexShrink:0}}/>
+              <div style={{flex:1, minWidth:0}}>
+                <div style={{fontSize:13, color:"#E0E0DE", overflow:"hidden",
+                  textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{t.text}</div>
+                {!isNew(t) && (
+                  <span style={{fontSize:9, color:"#F7A84A", background:"#F7A84A11",
+                    padding:"1px 5px", borderRadius:4, border:"1px solid #F7A84A22"}}>
+                    carried over
+                  </span>
+                )}
+              </div>
+              <button onClick={() => onDelete(t.id)}
+                style={{background:"none", border:"none", color:"#333",
+                  fontSize:16, cursor:"pointer", padding:"0 2px", lineHeight:1, flexShrink:0}}
+                onMouseEnter={e => e.currentTarget.style.color="#F76A6A"}
+                onMouseLeave={e => e.currentTarget.style.color="#333"}>×</button>
+            </div>
+          ))}
+
+          {/* Completed */}
+          {completed.map(t => (
+            <div key={t.id} style={{
+              display:"flex", alignItems:"center", gap:10,
+              padding:"7px 12px", borderRadius:8, opacity:0.45, marginBottom:5
+            }}>
+              <input type="checkbox" checked={true} onChange={() => onToggle(t.id)}
+                style={{width:15, height:15, accentColor:"#4ECDC4", cursor:"pointer", flexShrink:0}}/>
+              <span style={{flex:1, fontSize:12, color:"#666",
+                textDecoration:"line-through", overflow:"hidden",
+                textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{t.text}</span>
+              <button onClick={() => onDelete(t.id)}
+                style={{background:"none", border:"none", color:"#333",
+                  fontSize:16, cursor:"pointer", padding:"0 2px", lineHeight:1}}>×</button>
+            </div>
+          ))}
+
+          {todos.length === 0 && (
+            <p style={{fontSize:12, color:"#333", paddingTop:4}}>
+              No tasks for {mod.code} today — add one above ↑
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
