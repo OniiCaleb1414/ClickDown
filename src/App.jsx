@@ -12,6 +12,7 @@ const PLATFORMS = {
 const MODULE_COLORS = ["#7C6AF7","#F76A6A","#4ECDC4","#F7A84A","#A8E063","#F76AD3","#6AABF7"];
 
 const DEFAULT_DATA = {
+  todos: [],
   modules: [
     { id:"m1", code:"COS301", name:"Software Engineering",          color:"#7C6AF7", passMark:50, assignments:[
       { id:"a1",  name:"Mini Project Phase 1", weight:15, mark:null, dueDate:"2025-03-20", link:"https://clickup.up.ac.za", platform:"clickup", notes:"UML diagrams + requirements doc", done:false },
@@ -248,9 +249,9 @@ export default function App() {
   const [navOpen, setNavOpen] = useState(false);
 
   // Responsive breakpoint
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   useEffect(() => {
-    const handler = () => setIsMobile(window.innerWidth < 640);
+    const handler = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener("resize", handler);
     return () => window.removeEventListener("resize", handler);
   }, []);
@@ -317,14 +318,28 @@ export default function App() {
     return MODULE_COLORS.filter(c=>!used.includes(c));
   }, [data]);
 
+  // ── Today's tasks ──────────────────────────────────────────────────────────
+  const addTodo    = useCallback((text) => {
+    if (!text.trim()) return;
+    setData(d => ({...d, todos: [...(d.todos||[]), {id:"t"+Date.now(), text:text.trim(), done:false, createdAt:new Date().toISOString()}]}));
+  }, []);
+
+  const toggleTodo = useCallback((id) => {
+    setData(d => ({...d, todos: (d.todos||[]).map(t => t.id===id ? {...t, done:!t.done} : t)}));
+  }, []);
+
+  const deleteTodo = useCallback((id) => {
+    setData(d => ({...d, todos: (d.todos||[]).filter(t => t.id!==id)}));
+  }, []);
+
   // ── Nav helper ──────────────────────────────────────────────────────────────
   const goTo = (v) => { setView(v); setActiveM(null); setNavOpen(false); };
 
   // ── Styles ──────────────────────────────────────────────────────────────────
   const s = {
-    page:    { fontFamily:"'DM Mono','Fira Code',monospace", background:"#0A0A0C", minHeight:"100vh", color:"#E0E0DE" },
-    header:  { borderBottom:"1px solid #1c1c20", padding:"0 40px", display:"flex", alignItems:"center", justifyContent:"space-between", height:56, position:"sticky", top:0, background:"#0A0A0C", zIndex:100 },
-    content: { maxWidth:1300, margin:"0 auto", padding: isMobile ? "16px 14px 80px" : "28px 40px 48px" },
+    page:    { fontFamily:"'DM Mono','Fira Code',monospace", background:"#0A0A0C", minHeight:"100%", color:"#E0E0DE" },
+    header:  { borderBottom:"1px solid #1c1c20", padding:"0 32px", display:"flex", alignItems:"center", justifyContent:"space-between", height:56, position:"sticky", top:0, background:"#0A0A0C", zIndex:100 },
+    content: { padding: isMobile ? "16px 14px 100px" : "28px 40px 48px" },
     card:    { background:"#131315", border:"1px solid #1e1e22", borderRadius:12, padding: isMobile ? 14 : 22 },
     sectionLabel: { fontSize:10, color:"#555", letterSpacing:1.2, marginBottom:12, fontWeight:600 },
     btn:     (bg,col,border) => ({ padding:"8px 16px", borderRadius:8, fontSize:12, fontFamily:"inherit", background:bg, color:col, border:`1px solid ${border}`, cursor:"pointer", fontWeight:600, transition:"all .15s" }),
@@ -396,8 +411,11 @@ export default function App() {
           {/* Filter bar */}
           <FilterBar modules={data.modules} filters={filters} setFilters={setFilters} isMobile={isMobile}/>
 
+          {/* Today's Tasks */}
+          <TodayTasks todos={data.todos||[]} onAdd={addTodo} onToggle={toggleTodo} onDelete={deleteTodo} isMobile={isMobile} card={s.card} sectionLabel={s.sectionLabel}/>
+
           {/* Two-column layout on desktop */}
-          <div style={{display:"grid", gridTemplateColumns: isMobile ? "1fr" : "380px 1fr", gap:20, alignItems:"start"}}>
+          <div style={{display:"grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(340px,400px) 1fr", gap:20, alignItems:"start"}}>
 
           {/* LEFT: Upcoming deadlines */}
           <div style={{...s.card, minWidth:0}}>
@@ -657,8 +675,8 @@ export default function App() {
       </div>
 
       {/* Mobile bottom nav */}
-      {isMobile && !navOpen && (
-        <div style={{position:"fixed",bottom:0,left:0,right:0,background:"#0F0F12",borderTop:"1px solid #1c1c20",display:"flex",zIndex:100}}>
+      {isMobile && (
+        <div style={{position:"fixed",bottom:0,left:0,right:0,background:"#0F0F12",borderTop:"1px solid #1c1c20",display:"flex",zIndex:100,paddingBottom:"env(safe-area-inset-bottom,0px)"}}>
           {[["dashboard","⊞","Home"],["calendar","◷","Timeline"],["grades","◎","Grades"]].map(([v,icon,l])=>(
             <button key={v} onClick={()=>goTo(v)} style={{flex:1,padding:"10px 0 12px",background:"none",border:"none",cursor:"pointer",color:view===v?"#7C6AF7":"#555",fontSize:9,fontFamily:"inherit",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
               <span style={{fontSize:18,lineHeight:1}}>{icon}</span>{l}
@@ -692,6 +710,90 @@ export default function App() {
               onDelete={()=>deleteAssign(modal.moduleId,modal.assign.id)}/>
           )}
         </Modal>
+      )}
+    </div>
+  );
+}
+
+// ─── Today's Tasks component ─────────────────────────────────────────────────
+function TodayTasks({ todos, onAdd, onToggle, onDelete, isMobile, card, sectionLabel }) {
+  const [input, setInput] = useState("");
+  const pending   = todos.filter(t => !t.done);
+  const completed = todos.filter(t => t.done);
+
+  const handleAdd = () => {
+    if (!input.trim()) return;
+    onAdd(input);
+    setInput("");
+  };
+
+  return (
+    <div style={{...card, marginBottom:20}}>
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14}}>
+        <div style={{display:"flex", alignItems:"center", gap:8}}>
+          <p style={{...sectionLabel, marginBottom:0}}>TODAY'S TASKS</p>
+          {pending.length > 0 && (
+            <span style={{background:"#7C6AF722", color:"#7C6AF7", fontSize:10, fontWeight:700, padding:"1px 7px", borderRadius:10, border:"1px solid #7C6AF733"}}>
+              {pending.length}
+            </span>
+          )}
+        </div>
+        {completed.length > 0 && (
+          <span style={{fontSize:10, color:"#555"}}>{completed.length} done</span>
+        )}
+      </div>
+
+      {/* Add task input */}
+      <div style={{display:"flex", gap:8, marginBottom: todos.length > 0 ? 14 : 0}}>
+        <input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && handleAdd()}
+          placeholder="Add a task for today... (press Enter)"
+          style={{flex:1, background:"#0d0d0f", border:"1px solid #2a2a2e", color:"#E0E0DE", padding:"9px 12px", borderRadius:8, fontFamily:"inherit", fontSize:12, outline:"none"}}
+        />
+        <button
+          onClick={handleAdd}
+          style={{padding:"9px 14px", borderRadius:8, background:"#7C6AF722", color:"#7C6AF7", border:"1px solid #7C6AF733", fontFamily:"inherit", fontSize:12, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap"}}>
+          + Add
+        </button>
+      </div>
+
+      {/* Pending tasks */}
+      {pending.length > 0 && (
+        <div style={{display:"flex", flexDirection:"column", gap:6, marginBottom: completed.length > 0 ? 10 : 0}}>
+          {pending.map(t => (
+            <div key={t.id} style={{display:"flex", alignItems:"center", gap:10, padding:"9px 12px", background:"#0d0d0f", borderRadius:8, border:"1px solid #1e1e22", group:true}}>
+              <input type="checkbox" checked={false} onChange={() => onToggle(t.id)}
+                style={{width:15, height:15, accentColor:"#7C6AF7", cursor:"pointer", flexShrink:0}}/>
+              <span style={{flex:1, fontSize:13, color:"#E0E0DE"}}>{t.text}</span>
+              <button onClick={() => onDelete(t.id)}
+                style={{background:"none", border:"none", color:"#333", fontSize:14, cursor:"pointer", padding:"0 4px", lineHeight:1}}
+                onMouseEnter={e => e.currentTarget.style.color="#F76A6A"}
+                onMouseLeave={e => e.currentTarget.style.color="#333"}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Completed tasks (collapsed style) */}
+      {completed.length > 0 && (
+        <div style={{display:"flex", flexDirection:"column", gap:5}}>
+          <div style={{fontSize:10, color:"#444", letterSpacing:.8, marginBottom:4}}>COMPLETED</div>
+          {completed.map(t => (
+            <div key={t.id} style={{display:"flex", alignItems:"center", gap:10, padding:"7px 12px", borderRadius:8, opacity:0.5}}>
+              <input type="checkbox" checked={true} onChange={() => onToggle(t.id)}
+                style={{width:15, height:15, accentColor:"#4ECDC4", cursor:"pointer", flexShrink:0}}/>
+              <span style={{flex:1, fontSize:12, color:"#666", textDecoration:"line-through"}}>{t.text}</span>
+              <button onClick={() => onDelete(t.id)}
+                style={{background:"none", border:"none", color:"#333", fontSize:14, cursor:"pointer", padding:"0 4px", lineHeight:1}}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {todos.length === 0 && (
+        <p style={{color:"#333", fontSize:12, padding:"4px 0"}}>No tasks yet — type one above and press Enter ↵</p>
       )}
     </div>
   );
