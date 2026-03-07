@@ -319,13 +319,43 @@ export default function App() {
   }, [data]);
 
   // ── Today's tasks ──────────────────────────────────────────────────────────
-  const addTodo    = useCallback((text) => {
+  // Survival logic: runs once on mount
+  // A task is kept if: created today OR ever checked off. Otherwise deleted after 1 day.
+  useEffect(() => {
+    const today = new Date().toISOString().slice(0,10);
+    setData(d => ({
+      ...d,
+      todos: (d.todos||[]).filter(t => {
+        const createdDay = (t.createdAt||"").slice(0,10);
+        const isToday    = createdDay === today;
+        const everDone   = !!t.everDone; // set true when first checked
+        const dayOld     = createdDay < today;
+        // Keep if: created today, or ever worked on (checked at any point)
+        // Remove if: never touched AND at least 1 day old
+        if (isToday) return true;
+        if (everDone) return true;
+        if (dayOld && !everDone) return false;
+        return true;
+      })
+    }));
+  }, []); // eslint-disable-line
+
+  const addTodo = useCallback((text, moduleId) => {
     if (!text.trim()) return;
-    setData(d => ({...d, todos: [...(d.todos||[]), {id:"t"+Date.now(), text:text.trim(), done:false, createdAt:new Date().toISOString()}]}));
+    setData(d => ({...d, todos: [...(d.todos||[]), {
+      id: "t"+Date.now(),
+      text: text.trim(),
+      done: false,
+      everDone: false,
+      moduleId: moduleId || null,
+      createdAt: new Date().toISOString(),
+    }]}));
   }, []);
 
   const toggleTodo = useCallback((id) => {
-    setData(d => ({...d, todos: (d.todos||[]).map(t => t.id===id ? {...t, done:!t.done} : t)}));
+    setData(d => ({...d, todos: (d.todos||[]).map(t =>
+      t.id===id ? {...t, done:!t.done, everDone: t.everDone || !t.done} : t
+    )}));
   }, []);
 
   const deleteTodo = useCallback((id) => {
@@ -406,7 +436,7 @@ export default function App() {
           <FilterBar modules={data.modules} filters={filters} setFilters={setFilters} isMobile={isMobile}/>
 
           {/* Today's Tasks */}
-          <TodayTasks todos={data.todos||[]} onAdd={addTodo} onToggle={toggleTodo} onDelete={deleteTodo} isMobile={isMobile} card={s.card} sectionLabel={s.sectionLabel}/>
+          <TodayTasks todos={data.todos||[]} modules={data.modules} onAdd={addTodo} onToggle={toggleTodo} onDelete={deleteTodo} isMobile={isMobile} card={s.card} sectionLabel={s.sectionLabel}/>
 
           {/* Responsive layout — single col mobile, two col desktop */}
           <div style={isMobile ? {display:"flex",flexDirection:"column",gap:16,width:"100%"} : {display:"grid",gridTemplateColumns:"380px 1fr",gap:24,alignItems:"start",width:"100%"}}>
@@ -710,84 +740,155 @@ export default function App() {
 }
 
 // ─── Today's Tasks component ─────────────────────────────────────────────────
-function TodayTasks({ todos, onAdd, onToggle, onDelete, isMobile, card, sectionLabel }) {
-  const [input, setInput] = useState("");
+function TodayTasks({ todos, modules, onAdd, onToggle, onDelete, isMobile, card, sectionLabel }) {
+  const [input, setInput]       = useState("");
+  const [moduleId, setModuleId] = useState("none");
+  const [showDone, setShowDone] = useState(false);
+
   const pending   = todos.filter(t => !t.done);
   const completed = todos.filter(t => t.done);
 
+  const getModule = (id) => modules.find(m => m.id === id) || null;
+
   const handleAdd = () => {
     if (!input.trim()) return;
-    onAdd(input);
+    onAdd(input, moduleId === "none" ? null : moduleId);
     setInput("");
+    setModuleId("none");
   };
 
+  const today = new Date().toISOString().slice(0,10);
+  const isNew  = (t) => (t.createdAt||"").slice(0,10) === today;
+
   return (
-    <div style={{...card, marginBottom:20}}>
+    <div style={{...card, marginBottom:20, width:"100%"}}>
+
+      {/* Header */}
       <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14}}>
         <div style={{display:"flex", alignItems:"center", gap:8}}>
           <p style={{...sectionLabel, marginBottom:0}}>TODAY'S TASKS</p>
           {pending.length > 0 && (
-            <span style={{background:"#7C6AF722", color:"#7C6AF7", fontSize:10, fontWeight:700, padding:"1px 7px", borderRadius:10, border:"1px solid #7C6AF733"}}>
+            <span style={{background:"#7C6AF722", color:"#7C6AF7", fontSize:10, fontWeight:700,
+              padding:"1px 7px", borderRadius:10, border:"1px solid #7C6AF733"}}>
               {pending.length}
             </span>
           )}
         </div>
         {completed.length > 0 && (
-          <span style={{fontSize:10, color:"#555"}}>{completed.length} done</span>
+          <button onClick={() => setShowDone(s=>!s)}
+            style={{background:"none", border:"none", color:"#555", fontSize:10, cursor:"pointer",
+              fontFamily:"inherit", padding:0}}>
+            {showDone ? "hide" : `${completed.length} done ↓`}
+          </button>
         )}
       </div>
 
-      {/* Add task input */}
-      <div style={{display:"flex", gap:8, marginBottom: todos.length > 0 ? 14 : 0}}>
+      {/* Add task row */}
+      <div style={{display:"flex", gap:8, marginBottom: todos.length > 0 ? 14 : 0,
+        flexDirection: isMobile ? "column" : "row"}}>
         <input
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === "Enter" && handleAdd()}
-          placeholder="Add a task for today... (press Enter)"
-          style={{flex:1, background:"#0d0d0f", border:"1px solid #2a2a2e", color:"#E0E0DE", padding:"9px 12px", borderRadius:8, fontFamily:"inherit", fontSize:12, outline:"none"}}
+          placeholder="Add a task for today... (Enter to add)"
+          style={{flex:1, background:"#0d0d0f", border:"1px solid #2a2a2e", color:"#E0E0DE",
+            padding:"9px 12px", borderRadius:8, fontFamily:"inherit", fontSize:12,
+            outline:"none", width: isMobile ? "100%" : "auto"}}
         />
-        <button
-          onClick={handleAdd}
-          style={{padding:"9px 14px", borderRadius:8, background:"#7C6AF722", color:"#7C6AF7", border:"1px solid #7C6AF733", fontFamily:"inherit", fontSize:12, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap"}}>
+        {/* Module picker */}
+        <select
+          value={moduleId}
+          onChange={e => setModuleId(e.target.value)}
+          style={{background:"#0d0d0f", border:"1px solid #2a2a2e", color: moduleId==="none" ? "#555" : "#E0E0DE",
+            padding:"9px 10px", borderRadius:8, fontFamily:"inherit", fontSize:12,
+            outline:"none", cursor:"pointer", width: isMobile ? "100%" : "auto",
+            minWidth:120, flexShrink:0}}>
+          <option value="none">Personal</option>
+          {modules.map(m => (
+            <option key={m.id} value={m.id}>{m.code}</option>
+          ))}
+        </select>
+        <button onClick={handleAdd}
+          style={{padding:"9px 16px", borderRadius:8, background:"#7C6AF722", color:"#7C6AF7",
+            border:"1px solid #7C6AF733", fontFamily:"inherit", fontSize:12, fontWeight:600,
+            cursor:"pointer", whiteSpace:"nowrap", flexShrink:0}}>
           + Add
         </button>
       </div>
 
       {/* Pending tasks */}
       {pending.length > 0 && (
-        <div style={{display:"flex", flexDirection:"column", gap:6, marginBottom: completed.length > 0 ? 10 : 0}}>
-          {pending.map(t => (
-            <div key={t.id} style={{display:"flex", alignItems:"center", gap:10, padding:"9px 12px", background:"#0d0d0f", borderRadius:8, border:"1px solid #1e1e22", group:true}}>
-              <input type="checkbox" checked={false} onChange={() => onToggle(t.id)}
-                style={{width:15, height:15, accentColor:"#7C6AF7", cursor:"pointer", flexShrink:0}}/>
-              <span style={{flex:1, fontSize:13, color:"#E0E0DE"}}>{t.text}</span>
-              <button onClick={() => onDelete(t.id)}
-                style={{background:"none", border:"none", color:"#333", fontSize:14, cursor:"pointer", padding:"0 4px", lineHeight:1}}
-                onMouseEnter={e => e.currentTarget.style.color="#F76A6A"}
-                onMouseLeave={e => e.currentTarget.style.color="#333"}>×</button>
-            </div>
-          ))}
+        <div style={{display:"flex", flexDirection:"column", gap:6,
+          marginBottom: completed.length > 0 && showDone ? 12 : 0}}>
+          {pending.map(t => {
+            const mod   = getModule(t.moduleId);
+            const color = mod ? mod.color : "#555";
+            return (
+              <div key={t.id} style={{display:"flex", alignItems:"center", gap:10,
+                padding:"9px 12px", background:"#0d0d0f", borderRadius:8,
+                border:`1px solid ${mod ? color+"33" : "#1e1e22"}`,
+                borderLeft: mod ? `3px solid ${color}` : "1px solid #1e1e22"}}>
+                <input type="checkbox" checked={false} onChange={() => onToggle(t.id)}
+                  style={{width:15, height:15, accentColor: mod ? color : "#7C6AF7",
+                    cursor:"pointer", flexShrink:0}}/>
+                <div style={{flex:1, minWidth:0}}>
+                  <div style={{fontSize:13, color:"#E0E0DE", overflow:"hidden",
+                    textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{t.text}</div>
+                  <div style={{display:"flex", alignItems:"center", gap:6, marginTop:2}}>
+                    {mod
+                      ? <span style={{fontSize:10, color:color, fontWeight:600}}>{mod.code}</span>
+                      : <span style={{fontSize:10, color:"#444"}}>Personal</span>
+                    }
+                    {!isNew(t) && (
+                      <span style={{fontSize:9, color:"#F7A84A", background:"#F7A84A11",
+                        padding:"1px 5px", borderRadius:4, border:"1px solid #F7A84A22"}}>
+                        carried over
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <button onClick={() => onDelete(t.id)}
+                  style={{background:"none", border:"none", color:"#333", fontSize:16,
+                    cursor:"pointer", padding:"0 2px", lineHeight:1, flexShrink:0}}
+                  onMouseEnter={e => e.currentTarget.style.color="#F76A6A"}
+                  onMouseLeave={e => e.currentTarget.style.color="#333"}>×</button>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {/* Completed tasks (collapsed style) */}
-      {completed.length > 0 && (
+      {/* Completed tasks — collapsible */}
+      {completed.length > 0 && showDone && (
         <div style={{display:"flex", flexDirection:"column", gap:5}}>
           <div style={{fontSize:10, color:"#444", letterSpacing:.8, marginBottom:4}}>COMPLETED</div>
-          {completed.map(t => (
-            <div key={t.id} style={{display:"flex", alignItems:"center", gap:10, padding:"7px 12px", borderRadius:8, opacity:0.5}}>
-              <input type="checkbox" checked={true} onChange={() => onToggle(t.id)}
-                style={{width:15, height:15, accentColor:"#4ECDC4", cursor:"pointer", flexShrink:0}}/>
-              <span style={{flex:1, fontSize:12, color:"#666", textDecoration:"line-through"}}>{t.text}</span>
-              <button onClick={() => onDelete(t.id)}
-                style={{background:"none", border:"none", color:"#333", fontSize:14, cursor:"pointer", padding:"0 4px", lineHeight:1}}>×</button>
-            </div>
-          ))}
+          {completed.map(t => {
+            const mod   = getModule(t.moduleId);
+            const color = mod ? mod.color : "#4ECDC4";
+            return (
+              <div key={t.id} style={{display:"flex", alignItems:"center", gap:10,
+                padding:"7px 12px", borderRadius:8, opacity:0.5,
+                borderLeft: mod ? `3px solid ${color}` : "1px solid transparent"}}>
+                <input type="checkbox" checked={true} onChange={() => onToggle(t.id)}
+                  style={{width:15, height:15, accentColor:"#4ECDC4", cursor:"pointer", flexShrink:0}}/>
+                <div style={{flex:1, minWidth:0}}>
+                  <div style={{fontSize:12, color:"#666", textDecoration:"line-through",
+                    overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{t.text}</div>
+                  {mod && <span style={{fontSize:10, color:color}}>{mod.code}</span>}
+                </div>
+                <button onClick={() => onDelete(t.id)}
+                  style={{background:"none", border:"none", color:"#333", fontSize:16,
+                    cursor:"pointer", padding:"0 2px", lineHeight:1}}>×</button>
+              </div>
+            );
+          })}
         </div>
       )}
 
       {todos.length === 0 && (
-        <p style={{color:"#333", fontSize:12, padding:"4px 0"}}>No tasks yet — type one above and press Enter ↵</p>
+        <p style={{color:"#333", fontSize:12, padding:"4px 0"}}>
+          No tasks yet — add one above ↑
+        </p>
       )}
     </div>
   );
