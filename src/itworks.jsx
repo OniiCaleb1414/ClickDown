@@ -51,13 +51,13 @@ const DEFAULT_DATA = {
     // Assessments from Gradebook (sync via extension for exact dates/marks)
     { id:"m1", code:"COS212", name:"Data Structures & Algorithms", color:"#7C6AF7", passMark:50,
       assignments:[
-        { id:"a1",  name:"Tutorial 1 Test",   weight:3,  mark:null, dueDate:"2026-02-20", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/grades", platform:"clickup", notes:"Formative — sync from Gradebook for exact mark", done:false },
-        { id:"a2",  name:"Tutorial 2 Test",   weight:3,  mark:null, dueDate:"2026-02-27", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/grades", platform:"clickup", notes:"Formative", done:false },
-        { id:"a3",  name:"Tutorial 3 Test",   weight:3,  mark:null, dueDate:"2026-03-06", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/grades", platform:"clickup", notes:"Formative", done:false },
-        { id:"a4",  name:"Practical 1",       weight:10, mark:null, dueDate:"2026-03-07", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/grades", platform:"clickup", notes:"Sync from Gradebook for mark", done:false },
-        { id:"a5",  name:"Practical 2",       weight:10, mark:null, dueDate:"2026-04-10", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/grades", platform:"clickup", notes:"", done:false },
-        { id:"a6",  name:"Semester Test 1",   weight:25, mark:null, dueDate:"2026-04-01", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/grades", platform:"clickup", notes:"Check ClickUP for exact date", done:false },
-        { id:"a7",  name:"Exam",              weight:50, mark:null, dueDate:"2026-06-01", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/grades", platform:"clickup", notes:"", done:false },
+        { id:"a1",  name:"Tutorial 1 Test",   weight:3,  mark:null, dueDate:"2026-02-20", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/gradebook", platform:"clickup", notes:"Formative — sync from Gradebook for exact mark", done:false },
+        { id:"a2",  name:"Tutorial 2 Test",   weight:3,  mark:null, dueDate:"2026-02-27", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/gradebook", platform:"clickup", notes:"Formative", done:false },
+        { id:"a3",  name:"Tutorial 3 Test",   weight:3,  mark:null, dueDate:"2026-03-06", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/gradebook", platform:"clickup", notes:"Formative", done:false },
+        { id:"a4",  name:"Practical 1",       weight:10, mark:null, dueDate:"2026-03-07", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/gradebook", platform:"clickup", notes:"Sync from Gradebook for mark", done:false },
+        { id:"a5",  name:"Practical 2",       weight:10, mark:null, dueDate:"2026-04-10", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/gradebook", platform:"clickup", notes:"", done:false },
+        { id:"a6",  name:"Semester Test 1",   weight:25, mark:null, dueDate:"2026-04-01", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/gradebook", platform:"clickup", notes:"Check ClickUP for exact date", done:false },
+        { id:"a7",  name:"Exam",              weight:50, mark:null, dueDate:"2026-06-01", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/gradebook", platform:"clickup", notes:"", done:false },
       ]
     },
 
