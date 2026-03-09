@@ -724,7 +724,7 @@ function AuthGate() {
   return <App user={user} token={token} onSignOut={signOut} />;
 }
 
-export default function AuthGate() { return <AuthGate />; }
+export default AuthGate;
 
 function App({ user, token, onSignOut }) {
   const [data,    setData]    = useState(loadData);
