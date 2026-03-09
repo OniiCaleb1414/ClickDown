@@ -28,7 +28,9 @@ async function getSession() {
 
 async function signInWithGoogle() {
   const redirectTo = encodeURIComponent(window.location.origin + window.location.pathname);
-  window.location.href = `${SB_URL}/auth/v1/authorize?provider=google&redirect_to=${redirectTo}`;
+  // response_type=token forces implicit flow so token comes back in the URL hash
+  // This works without a backend server (pure frontend app)
+  window.location.href = `${SB_URL}/auth/v1/authorize?provider=google&redirect_to=${redirectTo}&response_type=token`;
 }
 
 async function signOut() {
