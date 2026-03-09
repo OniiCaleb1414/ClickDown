@@ -2,8 +2,8 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 // ─── Supabase config ─────────────────────────────────────────────────────────
-const SB_URL = "https://qtjlnvubejdasgfaeiic.supabase.co";
-const SB_KEY = "sb_publishable_m_H7ZdvVToxSrNz7et8olw_uQ_404H6";
+const SB_URL  = "https://qtjlnvubejdasgfaeiic.supabase.co";
+const SB_KEY  = "sb_publishable_m_H7ZdvVToxSrNz7et8olw_uQ_404H6";
 const SB_HEADERS = {
   "Content-Type": "application/json",
   "apikey": SB_KEY,
@@ -11,16 +11,19 @@ const SB_HEADERS = {
   "Prefer": "return=representation",
 };
 
+// ─── Supabase helpers ─────────────────────────────────────────────────────────
 async function sbLoad() {
   try {
     const r = await fetch(`${SB_URL}/rest/v1/acaddesk?id=eq.main&select=data`, { headers: SB_HEADERS });
     const rows = await r.json();
     if (rows?.[0]?.data?.modules) return rows[0].data;
-  } catch(e) { console.warn("Supabase load failed:", e); }
+  } catch(e) { console.warn("Supabase load failed, using local:", e); }
+  // Fallback to localStorage if offline
   try { const r = localStorage.getItem("acaddesk_cache"); return r ? JSON.parse(r) : null; } catch { return null; }
 }
 
 async function sbSave(data) {
+  // Always cache locally for offline resilience
   try { localStorage.setItem("acaddesk_cache", JSON.stringify(data)); } catch {}
   try {
     await fetch(`${SB_URL}/rest/v1/acaddesk?id=eq.main`, {
@@ -150,8 +153,9 @@ const DEFAULT_DATA = {
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+// loadData — sync fallback only (actual load happens async in useEffect)
 const loadData  = () => { try { const r = localStorage.getItem("acaddesk_cache"); return r ? JSON.parse(r) : DEFAULT_DATA; } catch { return DEFAULT_DATA; } };
-const saveData  = d  => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {} };
+const saveData  = d  => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {} }; // kept for extension
 const daysUntil = ds => Math.ceil((new Date(ds) - new Date()) / 86400000);
 const urgColor  = d  => d < 0 ? "#666" : d <= 3 ? "#F76A6A" : d <= 7 ? "#F7C56A" : "#4ECDC4";
 const fmtDate   = ds => new Date(ds).toLocaleDateString("en-ZA", { day:"numeric", month:"short" });
@@ -347,7 +351,6 @@ function applyFilters(assignments, filters) {
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
-
 export default function App() {
   const [data,    setData]    = useState(loadData);
   const [view,    setView]    = useState("dashboard");
@@ -365,35 +368,38 @@ export default function App() {
     return () => window.removeEventListener("resize", handler);
   }, []);
 
-  // ── Supabase: initial load (user-scoped) ────────────────────────────────
-  const [syncStatus, setSyncStatus] = useState("loading");
+  // ── Supabase: initial load ────────────────────────────────────────────────
+  const [syncStatus, setSyncStatus] = useState("loading"); // "loading"|"live"|"offline"
   const saveTimer   = useRef(null);
-  const isRemote    = useRef(false);
+  const isRemote    = useRef(false); // flag to skip save when change came from remote
 
   useEffect(() => {
-    
     sbLoad().then(remote => {
-      if (remote?.modules) { setData(remote); setSyncStatus("live"); }
-      else setSyncStatus("offline");
+      if (remote?.modules) {
+        setData(remote);
+        setSyncStatus("live");
+      } else {
+        setSyncStatus("offline");
+      }
     });
-  }, [token]);
+  }, []);
 
-  // ── Supabase: debounced save ──────────────────────────────────────────────
+  // ── Supabase: save on every data change (debounced 800ms) ────────────────
   useEffect(() => {
     if (isRemote.current) { isRemote.current = false; return; }
+    // Also write to localStorage so extension can still read it
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      if (token && user?.id)
-        sbSave(data).then(() => setSyncStatus("live")).catch(() => setSyncStatus("offline"));
+      sbSave(data).then(() => setSyncStatus("live")).catch(() => setSyncStatus("offline"));
     }, 800);
     return () => clearTimeout(saveTimer.current);
   }, [data]);
 
-  // ── Poll every 5s for changes from other devices ──────────────────────────
+  // ── Supabase: realtime subscription (long-poll every 5s) ─────────────────
+  // Supabase realtime requires the client library; we use a lightweight polling approach instead
   useEffect(() => {
-    
-    const interval = setInterval(async () => {
+    let interval = setInterval(async () => {
       try {
         const r = await fetch(
           `${SB_URL}/rest/v1/acaddesk?id=eq.main&select=data,updated_at`,
@@ -402,30 +408,35 @@ export default function App() {
         const rows = await r.json();
         const remote = rows?.[0];
         if (!remote?.data?.modules) return;
+        // Only update if remote is newer than our last save
         const remoteTime = new Date(remote.updated_at).getTime();
         const localTime  = new Date(window._lastSave || 0).getTime();
-        if (remoteTime > localTime + 1000) { isRemote.current = true; setData(remote.data); setSyncStatus("live"); }
+        if (remoteTime > localTime + 1000) {
+          isRemote.current = true;
+          setData(remote.data);
+          setSyncStatus("live");
+        }
       } catch { setSyncStatus("offline"); }
     }, 5000);
     return () => clearInterval(interval);
   }, []);
 
+  // Track our own save time so we don't loop
   useEffect(() => { window._lastSave = new Date().toISOString(); }, [data]);
 
-  // ── Extension writes ──────────────────────────────────────────────────────
+  // ── Extension writes (localStorage) ──────────────────────────────────────
   useEffect(() => {
     const handler = (e) => {
       if (e.key === STORAGE_KEY && e.newValue) {
         try {
           const incoming = JSON.parse(e.newValue);
-          if (incoming?.modules) { setData(incoming); if (token && user?.id) sbSave(incoming); }
+          if (incoming?.modules) { setData(incoming); sbSave(incoming); }
         } catch {}
       }
     };
     window.addEventListener("storage", handler);
     return () => window.removeEventListener("storage", handler);
-  }, [token]);
-
+  }, []);
 
   // ── Data mutations ──────────────────────────────────────────────────────────
   const upsertAssign = useCallback((moduleId, assign) => {
@@ -568,22 +579,13 @@ export default function App() {
             <span style={{fontSize:12,color:mod.color,fontWeight:600}}>{mod.code}</span>
           </>}
         </div>
-        {isMobile ? <div/> : (
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
+        {isMobile ? (
+  <div/>
+        ) : (
+          <div style={{display:"flex",gap:2}}>
             {[["dashboard","Dashboard"],["calendar","Timeline"],["grades","Grades"]].map(([v,l])=>(
-              <button key={v} onClick={()=>{goTo(v);}} style={{padding:"6px 13px",borderRadius:8,fontSize:12,fontFamily:"inherit",background:view===v?"#1e1e22":"transparent",color:view===v?"#E0E0DE":"#666",border:"none",cursor:"pointer",transition:"all .15s"}}>{l}</button>
+              <button key={v} onClick={()=>goTo(v)} style={{padding:"6px 13px",borderRadius:8,fontSize:12,fontFamily:"inherit",background:view===v?"#1e1e22":"transparent",color:view===v?"#E0E0DE":"#666",border:"none",cursor:"pointer",transition:"all .15s"}}>{l}</button>
             ))}
-            {/* User avatar + sign out */}
-            <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:8,paddingLeft:8,borderLeft:"1px solid #1e1e22"}}>
-              {user?.user_metadata?.avatar_url
-                ? <img src={user.user_metadata.avatar_url} style={{width:24,height:24,borderRadius:"50%",objectFit:"cover"}} alt=""/>
-                : <div style={{width:24,height:24,borderRadius:"50%",background:"#7C6AF722",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#7C6AF7",fontWeight:700}}>{(user?.email||"?")[0].toUpperCase()}</div>
-              }
-              <span style={{fontSize:11,color:"#555",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user?.user_metadata?.full_name || user?.email}</span>
-              <button onClick={onSignOut} title="Sign out" style={{background:"none",border:"none",color:"#444",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}}
-                onMouseEnter={e=>e.currentTarget.style.color="#F76A6A"}
-                onMouseLeave={e=>e.currentTarget.style.color="#444"}>⏻</button>
-            </div>
           </div>
         )}
       </div>
