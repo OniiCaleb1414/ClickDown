@@ -4,90 +4,31 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 // ─── Supabase config ─────────────────────────────────────────────────────────
 const SB_URL = "https://qtjlnvubejdasgfaeiic.supabase.co";
 const SB_KEY = "sb_publishable_m_H7ZdvVToxSrNz7et8olw_uQ_404H6";
+const SB_HEADERS = {
+  "Content-Type": "application/json",
+  "apikey": SB_KEY,
+  "Authorization": `Bearer ${SB_KEY}`,
+  "Prefer": "return=representation",
+};
 
-// Auth-aware headers — always call this fresh so token is current
-function sbHeaders(token) {
-  return {
-    "Content-Type": "application/json",
-    "apikey": SB_KEY,
-    "Authorization": `Bearer ${token || SB_KEY}`,
-    "Prefer": "return=representation",
-  };
-}
-
-// ─── Auth helpers ─────────────────────────────────────────────────────────────
-async function getSession() {
+async function sbLoad() {
   try {
-    const r = await fetch(`${SB_URL}/auth/v1/user`, {
-      headers: { "apikey": SB_KEY, "Authorization": `Bearer ${localStorage.getItem("sb_token") || SB_KEY}` }
-    });
-    if (!r.ok) return null;
-    return await r.json();
-  } catch { return null; }
-}
-
-async function signInWithGoogle() {
-  const redirectTo = encodeURIComponent(window.location.origin + window.location.pathname);
-  // response_type=token forces implicit flow so token comes back in the URL hash
-  // This works without a backend server (pure frontend app)
-  window.location.href = `${SB_URL}/auth/v1/authorize?provider=google&redirect_to=${redirectTo}&response_type=token`;
-}
-
-async function signOut() {
-  const token = localStorage.getItem("sb_token");
-  if (token) {
-    await fetch(`${SB_URL}/auth/v1/logout`, {
-      method: "POST",
-      headers: { "apikey": SB_KEY, "Authorization": `Bearer ${token}` }
-    }).catch(() => {});
-  }
-  localStorage.removeItem("sb_token");
-  localStorage.removeItem("sb_refresh");
-  localStorage.removeItem("acaddesk_cache");
-  window.location.reload();
-}
-
-// ─── Data helpers (auth-aware) ────────────────────────────────────────────────
-async function sbLoad(token, userId) {
-  try {
-    const r = await fetch(
-      `${SB_URL}/rest/v1/acaddesk?user_id=eq.${userId}&select=data`,
-      { headers: sbHeaders(token) }
-    );
+    const r = await fetch(`${SB_URL}/rest/v1/acaddesk?id=eq.main&select=data`, { headers: SB_HEADERS });
     const rows = await r.json();
     if (rows?.[0]?.data?.modules) return rows[0].data;
   } catch(e) { console.warn("Supabase load failed:", e); }
   try { const r = localStorage.getItem("acaddesk_cache"); return r ? JSON.parse(r) : null; } catch { return null; }
 }
 
-async function sbSave(data, token, userId) {
+async function sbSave(data) {
   try { localStorage.setItem("acaddesk_cache", JSON.stringify(data)); } catch {}
-  const hdrs = sbHeaders(token);
   try {
-    // Check if row exists for this user
-    const check = await fetch(`${SB_URL}/rest/v1/acaddesk?user_id=eq.${userId}&select=id`, { headers: hdrs });
-    const rows  = await check.json();
-    if (rows?.length > 0) {
-      // Update existing row
-      await fetch(`${SB_URL}/rest/v1/acaddesk?user_id=eq.${userId}`, {
-        method: "PATCH",
-        headers: { ...hdrs, "Prefer": "return=minimal" },
-        body: JSON.stringify({ data, updated_at: new Date().toISOString() })
-      });
-    } else {
-      // Insert new row for this user
-      await fetch(`${SB_URL}/rest/v1/acaddesk`, {
-        method: "POST",
-        headers: { ...hdrs, "Prefer": "return=minimal" },
-        body: JSON.stringify({ user_id: userId, data, updated_at: new Date().toISOString() })
-      });
-    }
+    await fetch(`${SB_URL}/rest/v1/acaddesk?id=eq.main`, {
+      method: "PATCH",
+      headers: { ...SB_HEADERS, "Prefer": "return=minimal" },
+      body: JSON.stringify({ data, updated_at: new Date().toISOString() })
+    });
   } catch(e) { console.warn("Supabase save failed:", e); }
-}
-
-// ─── Allowed email domains (UP only) ─────────────────────────────────────────
-function isUPEmail(email) {
-  return /@(up|tuks)\.ac\.za$/i.test(email || "");
 }
 
 const STORAGE_KEY = "up_acaddesk_v3"; // kept for extension compat
@@ -407,332 +348,7 @@ function applyFilters(assignments, filters) {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
-// ─── Login Screen ─────────────────────────────────────────────────────────────
-function LoginScreen({ onLogin, error }) {
-  const [loading, setLoading] = useState(false);
-
-  const handleLogin = async () => {
-    setLoading(true);
-    await signInWithGoogle();
-  };
-
-  return (
-    <div style={{
-      minHeight:"100dvh", background:"#0A0A0C", display:"flex",
-      alignItems:"center", justifyContent:"center", padding:24,
-      fontFamily:"DM Mono,monospace"
-    }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@600;700;800&display=swap');*{box-sizing:border-box;margin:0;padding:0;}`}</style>
-      <div style={{width:"100%", maxWidth:380, textAlign:"center"}}>
-
-        {/* Logo */}
-        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:32}}>
-          <div style={{width:40,height:40,borderRadius:12,background:"linear-gradient(135deg,#7C6AF7,#F7A84A)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:"white",fontFamily:"Syne,sans-serif"}}>UP</div>
-          <span style={{fontFamily:"Syne,sans-serif",fontWeight:800,fontSize:22,color:"#E0E0DE"}}>AcadDesk</span>
-        </div>
-
-        {/* Card */}
-        <div style={{background:"#131315",border:"1px solid #1e1e22",borderRadius:16,padding:32}}>
-          <h1 style={{fontFamily:"Syne,sans-serif",fontSize:20,fontWeight:800,color:"#E0E0DE",marginBottom:8}}>
-            Welcome back
-          </h1>
-          <p style={{fontSize:12,color:"#555",marginBottom:28,lineHeight:1.6}}>
-            Sign in with your UP Google account<br/>
-            <span style={{color:"#333"}}>(@up.ac.za or @tuks.co.za only)</span>
-          </p>
-
-          {error && (
-            <div style={{background:"#F76A6A11",border:"1px solid #F76A6A33",borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#F76A6A"}}>
-              {error}
-            </div>
-          )}
-
-          <button
-            onClick={handleLogin}
-            disabled={loading}
-            style={{
-              width:"100%", padding:"12px 16px", borderRadius:10,
-              background: loading ? "#1e1e22" : "#E0E0DE",
-              color: loading ? "#555" : "#0A0A0C",
-              border:"none", cursor: loading ? "not-allowed" : "pointer",
-              fontFamily:"Syne,sans-serif", fontWeight:700, fontSize:14,
-              display:"flex", alignItems:"center", justifyContent:"center", gap:10,
-              transition:"all .15s"
-            }}
-          >
-            {/* Google G icon */}
-            {!loading && (
-              <svg width="18" height="18" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/>
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-              </svg>
-            )}
-            {loading ? "Redirecting to Google..." : "Continue with Google"}
-          </button>
-        </div>
-
-        <p style={{fontSize:11,color:"#333",marginTop:20}}>
-          University of Pretoria students only
-        </p>
-      </div>
-    </div>
-  );
-}
-
-// ─── Friends Panel ────────────────────────────────────────────────────────────
-function FriendsPanel({ user, token, isMobile, card, sectionLabel }) {
-  const [friends,    setFriends]    = useState([]);
-  const [pending,    setPending]    = useState([]);
-  const [search,     setSearch]     = useState("");
-  const [searchRes,  setSearchRes]  = useState([]);
-  const [searching,  setSearching]  = useState(false);
-  const [friendData, setFriendData] = useState({}); // userId → acaddesk data
-
-  // Load friends
-  useEffect(() => {
-    if (!token) return;
-    const h = { "Content-Type":"application/json","apikey":SB_KEY,"Authorization":`Bearer ${token}` };
-    // Accepted friends
-    fetch(`${SB_URL}/rest/v1/friendships?or=(requester_id.eq.${user.id},receiver_id.eq.${user.id})&status=eq.accepted`, { headers: h })
-      .then(r => r.json()).then(rows => {
-        setFriends(rows || []);
-        // Load their data
-        rows?.forEach(async row => {
-          const friendId = row.requester_id === user.id ? row.receiver_id : row.requester_id;
-          const dr = await fetch(`${SB_URL}/rest/v1/acaddesk?user_id=eq.${friendId}&select=data`, { headers: h });
-          const drows = await dr.json();
-          if (drows?.[0]?.data) setFriendData(prev => ({ ...prev, [friendId]: drows[0].data }));
-        });
-      }).catch(() => {});
-    // Pending received requests
-    fetch(`${SB_URL}/rest/v1/friendships?receiver_id=eq.${user.id}&status=eq.pending`, { headers: h })
-      .then(r => r.json()).then(rows => setPending(rows || [])).catch(() => {});
-  }, [token]);
-
-  // Search UP users by email
-  const doSearch = async () => {
-    if (!search.trim()) return;
-    setSearching(true);
-    const h = { "Content-Type":"application/json","apikey":SB_KEY,"Authorization":`Bearer ${token}` };
-    const r = await fetch(`${SB_URL}/rest/v1/profiles?email=ilike.*${encodeURIComponent(search)}*&limit=5`, { headers: h });
-    const rows = await r.json();
-    setSearchRes((rows || []).filter(p => p.id !== user.id));
-    setSearching(false);
-  };
-
-  const sendRequest = async (receiverId) => {
-    const h = { "Content-Type":"application/json","apikey":SB_KEY,"Authorization":`Bearer ${token}` };
-    await fetch(`${SB_URL}/rest/v1/friendships`, {
-      method:"POST", headers: h,
-      body: JSON.stringify({ requester_id: user.id, receiver_id: receiverId, status:"pending" })
-    });
-    setSearchRes(prev => prev.filter(p => p.id !== receiverId));
-  };
-
-  const acceptRequest = async (friendshipId, requesterId) => {
-    const h = { "Content-Type":"application/json","apikey":SB_KEY,"Authorization":`Bearer ${token}` };
-    await fetch(`${SB_URL}/rest/v1/friendships?id=eq.${friendshipId}`, {
-      method:"PATCH", headers: { ...h, "Prefer":"return=minimal" },
-      body: JSON.stringify({ status:"accepted" })
-    });
-    setPending(prev => prev.filter(p => p.id !== friendshipId));
-  };
-
-  const today = new Date().toISOString().slice(0,10);
-
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-
-      {/* Pending requests */}
-      {pending.length > 0 && (
-        <div style={card}>
-          <p style={sectionLabel}>FRIEND REQUESTS</p>
-          {pending.map(req => (
-            <div key={req.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px solid #1e1e22"}}>
-              <span style={{fontSize:13,color:"#E0E0DE"}}>{req.requester_id}</span>
-              <button onClick={() => acceptRequest(req.id, req.requester_id)} style={{padding:"6px 14px",borderRadius:7,background:"#4ECDC422",color:"#4ECDC4",border:"1px solid #4ECDC433",fontFamily:"inherit",fontSize:11,cursor:"pointer",fontWeight:600}}>
-                Accept
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Search */}
-      <div style={card}>
-        <p style={sectionLabel}>ADD FRIENDS</p>
-        <div style={{display:"flex",gap:8,marginTop:8}}>
-          <input
-            placeholder="Search by UP email..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && doSearch()}
-            style={{flex:1,background:"#0A0A0C",border:"1px solid #2a2a2e",color:"#E0E0DE",padding:"8px 11px",borderRadius:7,fontFamily:"inherit",fontSize:12,outline:"none"}}
-          />
-          <button onClick={doSearch} style={{padding:"8px 14px",borderRadius:7,background:"#7C6AF722",color:"#7C6AF7",border:"1px solid #7C6AF733",fontFamily:"inherit",fontSize:12,cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>
-            {searching ? "..." : "Search"}
-          </button>
-        </div>
-        {searchRes.map(p => (
-          <div key={p.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:10,padding:"8px 0",borderTop:"1px solid #1e1e22"}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              {p.avatar_url
-                ? <img src={p.avatar_url} style={{width:28,height:28,borderRadius:"50%",objectFit:"cover"}} alt=""/>
-                : <div style={{width:28,height:28,borderRadius:"50%",background:"#7C6AF722",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"#7C6AF7",fontWeight:700}}>{(p.name||"?")[0]}</div>
-              }
-              <div>
-                <div style={{fontSize:13,color:"#E0E0DE",fontWeight:500}}>{p.name || "Unknown"}</div>
-                <div style={{fontSize:10,color:"#555"}}>{p.email}</div>
-              </div>
-            </div>
-            <button onClick={() => sendRequest(p.id)} style={{padding:"6px 12px",borderRadius:7,background:"#7C6AF722",color:"#7C6AF7",border:"1px solid #7C6AF733",fontFamily:"inherit",fontSize:11,cursor:"pointer",fontWeight:600}}>
-              + Add
-            </button>
-          </div>
-        ))}
-        {searchRes.length === 0 && search && !searching && (
-          <p style={{fontSize:12,color:"#444",marginTop:10}}>No UP students found with that email</p>
-        )}
-      </div>
-
-      {/* Friends list + their data */}
-      {friends.length === 0 && pending.length === 0 ? (
-        <div style={card}>
-          <p style={{fontSize:13,color:"#444",textAlign:"center",padding:"20px 0"}}>No friends added yet — search above to add friends 👆</p>
-        </div>
-      ) : (
-        friends.map(row => {
-          const friendId   = row.requester_id === user.id ? row.receiver_id : row.requester_id;
-          const fData      = friendData[friendId];
-          const upcoming   = fData?.modules?.flatMap(m =>
-            (m.assignments||[]).filter(a => !a.done && a.dueDate >= today).map(a => ({ ...a, _mod:m }))
-          ).sort((a,b) => a.dueDate?.localeCompare(b.dueDate)).slice(0,3) || [];
-
-          return (
-            <div key={row.id} style={card}>
-              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
-                <div style={{width:32,height:32,borderRadius:"50%",background:"linear-gradient(135deg,#7C6AF7,#4ECDC4)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,color:"white",fontWeight:700}}>👤</div>
-                <div>
-                  <div style={{fontSize:13,fontWeight:600,color:"#E0E0DE"}}>Friend</div>
-                  <div style={{fontSize:10,color:"#555"}}>{fData ? `${fData.modules?.length || 0} modules` : "Loading..."}</div>
-                </div>
-              </div>
-
-              {/* Their modules */}
-              {fData?.modules && (
-                <div style={{marginBottom:12}}>
-                  <p style={{fontSize:10,color:"#555",letterSpacing:1,marginBottom:8}}>MODULES</p>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                    {fData.modules.map(m => {
-                      const graded   = m.assignments?.filter(a => a.mark !== null) || [];
-                      const avg      = graded.length ? Math.round(graded.reduce((s,a) => s + a.mark, 0) / graded.length) : null;
-                      return (
-                        <div key={m.id} style={{padding:"5px 10px",borderRadius:7,background:m.color+"11",border:`1px solid ${m.color}33`,fontSize:11}}>
-                          <span style={{color:m.color,fontWeight:600}}>{m.code}</span>
-                          {avg !== null && <span style={{color:avg>=50?"#4ECDC4":"#F76A6A",marginLeft:6}}>{avg}%</span>}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Their upcoming deadlines */}
-              {upcoming.length > 0 && (
-                <div>
-                  <p style={{fontSize:10,color:"#555",letterSpacing:1,marginBottom:8}}>UPCOMING</p>
-                  {upcoming.map(a => (
-                    <div key={a.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:"1px solid #1e1e22",fontSize:12}}>
-                      <span style={{color:"#CCC"}}>{a.name}</span>
-                      <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                        <span style={{color:a._mod.color,fontSize:10,fontWeight:600}}>{a._mod.code}</span>
-                        <span style={{color:"#555",fontSize:10}}>{a.dueDate}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })
-      )}
-    </div>
-  );
-}
-
-// ─── AuthGate — wraps App, handles session ────────────────────────────────────
-function AuthGate() {
-  const [user,    setUser]    = useState(null);
-  const [token,   setToken]   = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState(null);
-
-  useEffect(() => {
-    // 1. Supabase returns token in EITHER hash (#access_token=) or query (?access_token=)
-    let accessToken  = null;
-    let refreshToken = null;
-
-    // Check hash first
-    if (window.location.hash.includes("access_token")) {
-      const p = new URLSearchParams(window.location.hash.replace("#", "?"));
-      accessToken  = p.get("access_token");
-      refreshToken = p.get("refresh_token");
-    }
-    // Then check query string
-    if (!accessToken && window.location.search.includes("access_token")) {
-      const p = new URLSearchParams(window.location.search);
-      accessToken  = p.get("access_token");
-      refreshToken = p.get("refresh_token");
-    }
-
-    if (accessToken) {
-      localStorage.setItem("sb_token",   accessToken);
-      localStorage.setItem("sb_refresh", refreshToken || "");
-      // Clean URL so token doesn't sit in address bar
-      window.history.replaceState(null, "", window.location.pathname);
-    }
-
-    // 2. Try stored token
-    const storedToken = accessToken || localStorage.getItem("sb_token");
-    if (!storedToken) { setLoading(false); return; }
-
-    // 3. Verify token with Supabase and get user
-    fetch(`${SB_URL}/auth/v1/user`, {
-      headers: { "apikey": SB_KEY, "Authorization": `Bearer ${storedToken}` }
-    })
-      .then(r => r.ok ? r.json() : Promise.reject("invalid"))
-      .then(u => {
-        if (!u?.id) { localStorage.removeItem("sb_token"); setLoading(false); return; }
-        setUser(u);
-        setToken(storedToken);
-        setLoading(false);
-      })
-      .catch(() => {
-        localStorage.removeItem("sb_token");
-        setLoading(false);
-      });
-  }, []);
-
-  if (loading) return (
-    <div style={{minHeight:"100dvh",background:"#0A0A0C",display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{fontFamily:"Syne,sans-serif",color:"#7C6AF7",fontSize:14,fontWeight:700,letterSpacing:2}}>
-        ACADDESK
-        <div style={{width:4,height:4,borderRadius:"50%",background:"#7C6AF7",margin:"12px auto 0",animation:"pulse 1s infinite"}}/>
-      </div>
-      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
-    </div>
-  );
-
-  if (!user) return <LoginScreen onLogin={signInWithGoogle} error={error} />;
-
-  return <App user={user} token={token} onSignOut={signOut} />;
-}
-
-export default AuthGate;
-
-function App({ user, token, onSignOut }) {
+export default function App() {
   const [data,    setData]    = useState(loadData);
   const [view,    setView]    = useState("dashboard");
   const [activeM, setActiveM] = useState(null);
@@ -740,7 +356,6 @@ function App({ user, token, onSignOut }) {
   const [target,  setTarget]  = useState(50);
   const [filters, setFilters] = useState({ module:"all", deadline:"all", weight:"all", platform:"all" });
   const [navOpen, setNavOpen] = useState(false);
-  const [showFriends, setShowFriends] = useState(false);
 
   // Responsive breakpoint
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -756,8 +371,8 @@ function App({ user, token, onSignOut }) {
   const isRemote    = useRef(false);
 
   useEffect(() => {
-    if (!token || !user?.id) return;
-    sbLoad(token, user.id).then(remote => {
+    
+    sbLoad().then(remote => {
       if (remote?.modules) { setData(remote); setSyncStatus("live"); }
       else setSyncStatus("offline");
     });
@@ -770,19 +385,19 @@ function App({ user, token, onSignOut }) {
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       if (token && user?.id)
-        sbSave(data, token, user.id).then(() => setSyncStatus("live")).catch(() => setSyncStatus("offline"));
+        sbSave(data).then(() => setSyncStatus("live")).catch(() => setSyncStatus("offline"));
     }, 800);
     return () => clearTimeout(saveTimer.current);
   }, [data]);
 
   // ── Poll every 5s for changes from other devices ──────────────────────────
   useEffect(() => {
-    if (!token || !user?.id) return;
+    
     const interval = setInterval(async () => {
       try {
         const r = await fetch(
-          `${SB_URL}/rest/v1/acaddesk?user_id=eq.${user.id}&select=data,updated_at`,
-          { headers: sbHeaders(token) }
+          `${SB_URL}/rest/v1/acaddesk?id=eq.main&select=data,updated_at`,
+          { headers: SB_HEADERS }
         );
         const rows = await r.json();
         const remote = rows?.[0];
@@ -793,7 +408,7 @@ function App({ user, token, onSignOut }) {
       } catch { setSyncStatus("offline"); }
     }, 5000);
     return () => clearInterval(interval);
-  }, [token]);
+  }, []);
 
   useEffect(() => { window._lastSave = new Date().toISOString(); }, [data]);
 
@@ -803,7 +418,7 @@ function App({ user, token, onSignOut }) {
       if (e.key === STORAGE_KEY && e.newValue) {
         try {
           const incoming = JSON.parse(e.newValue);
-          if (incoming?.modules) { setData(incoming); if (token && user?.id) sbSave(incoming, token, user.id); }
+          if (incoming?.modules) { setData(incoming); if (token && user?.id) sbSave(incoming); }
         } catch {}
       }
     };
@@ -811,18 +426,6 @@ function App({ user, token, onSignOut }) {
     return () => window.removeEventListener("storage", handler);
   }, [token]);
 
-  // ── Push auth token to extension so it can sync on behalf of this user ───
-  useEffect(() => {
-    if (!token || !user?.id) return;
-    try {
-      if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
-        // Replace EXT_ID below with your actual extension ID from chrome://extensions
-        // Or leave as-is — the extension also listens via externally_connectable
-        chrome.runtime.sendMessage({ action: "SET_AUTH", token, userId: user.id })
-          .catch(() => {}); // silently fails if extension not installed
-      }
-    } catch {}
-  }, [token, user?.id]);
 
   // ── Data mutations ──────────────────────────────────────────────────────────
   const upsertAssign = useCallback((moduleId, assign) => {
@@ -968,9 +571,8 @@ function App({ user, token, onSignOut }) {
         {isMobile ? <div/> : (
           <div style={{display:"flex",alignItems:"center",gap:6}}>
             {[["dashboard","Dashboard"],["calendar","Timeline"],["grades","Grades"]].map(([v,l])=>(
-              <button key={v} onClick={()=>{goTo(v);setShowFriends(false);}} style={{padding:"6px 13px",borderRadius:8,fontSize:12,fontFamily:"inherit",background:view===v&&!showFriends?"#1e1e22":"transparent",color:view===v&&!showFriends?"#E0E0DE":"#666",border:"none",cursor:"pointer",transition:"all .15s"}}>{l}</button>
+              <button key={v} onClick={()=>{goTo(v);}} style={{padding:"6px 13px",borderRadius:8,fontSize:12,fontFamily:"inherit",background:view===v?"#1e1e22":"transparent",color:view===v?"#E0E0DE":"#666",border:"none",cursor:"pointer",transition:"all .15s"}}>{l}</button>
             ))}
-            <button onClick={()=>setShowFriends(f=>!f)} style={{padding:"6px 13px",borderRadius:8,fontSize:12,fontFamily:"inherit",background:showFriends?"#1e1e22":"transparent",color:showFriends?"#4ECDC4":"#666",border:"none",cursor:"pointer",transition:"all .15s"}}>Friends</button>
             {/* User avatar + sign out */}
             <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:8,paddingLeft:8,borderLeft:"1px solid #1e1e22"}}>
               {user?.user_metadata?.avatar_url
@@ -990,22 +592,11 @@ function App({ user, token, onSignOut }) {
 
       <div style={s.content}>
 
-        {/* ════ FRIENDS ════ */}
-        {showFriends && (
-          <FriendsPanel
-            user={user}
-            token={token}
-            isMobile={isMobile}
-            card={s.card}
-            sectionLabel={s.sectionLabel}
-          />
-        )}
-
         {/* ════ DASHBOARD ════ */}
-        {!showFriends && view==="dashboard" && !activeM && (<>
+        {view==="dashboard" && !activeM && (<>
           <div style={{marginBottom:22}}>
             <h1 style={{fontFamily:"Syne,sans-serif",fontSize:isMobile?18:22,fontWeight:800,marginBottom:4}}>
-              Good {new Date().getHours()<12?"morning":new Date().getHours()<17?"afternoon":"evening"}{user?.user_metadata?.full_name ? `, ${user.user_metadata.full_name.split(" ")[0]}` : ""} 👋
+              Good {new Date().getHours()<12?"morning":new Date().getHours()<17?"afternoon":"evening"} 👋
             </h1>
             <p style={{color:"#555",fontSize:12}}>{data.modules.length} modules · {upcomingAll.length} pending tasks</p>
           </div>
@@ -1104,7 +695,7 @@ function App({ user, token, onSignOut }) {
         </>)}
 
         {/* ════ MODULE DETAIL ════ */}
-        {!showFriends && view==="dashboard" && activeM && mod && (<>
+        {view==="dashboard" && activeM && mod && (<>
           {!isMobile&&(
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
               <button onClick={()=>setActiveM(null)} style={{...s.btn("transparent","#888","#2a2a2e"),padding:"5px 11px"}}>← Back</button>
@@ -1184,7 +775,7 @@ function App({ user, token, onSignOut }) {
         </>)}
 
         {/* ════ TIMELINE ════ */}
-        {!showFriends && view==="calendar" && (<>
+        {view==="calendar" && (<>
           <h2 style={{fontFamily:"Syne,sans-serif",fontSize:isMobile?17:20,fontWeight:800,marginBottom:14}}>Deadline Timeline</h2>
           <FilterBar modules={data.modules} filters={filters} setFilters={setFilters} isMobile={isMobile}/>
           {(()=>{
@@ -1225,7 +816,7 @@ function App({ user, token, onSignOut }) {
         </>)}
 
         {/* ════ GRADES ════ */}
-        {!showFriends && view==="grades" && (<>
+        {view==="grades" && (<>
           <h2 style={{fontFamily:"Syne,sans-serif",fontSize:isMobile?17:20,fontWeight:800,marginBottom:6}}>Grade Calculator</h2>
           <p style={{color:"#555",fontSize:12,marginBottom:18}}>What avg do you need on remaining work to hit your target?</p>
           <div style={{display:"flex",gap:8,marginBottom:22,flexWrap:"wrap",alignItems:"center"}}>
