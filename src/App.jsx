@@ -27,7 +27,7 @@ async function getSession() {
 }
 
 async function signInWithGoogle() {
-  const redirectTo = encodeURIComponent(window.location.origin);
+  const redirectTo = encodeURIComponent(window.location.origin + window.location.pathname);
   window.location.href = `${SB_URL}/auth/v1/authorize?provider=google&redirect_to=${redirectTo}`;
 }
 
@@ -668,45 +668,49 @@ function AuthGate() {
   const [error,   setError]   = useState(null);
 
   useEffect(() => {
-    // 1. Check for hash fragment from OAuth redirect: #access_token=...
-    const hash = window.location.hash;
-    if (hash.includes("access_token")) {
-      const params = new URLSearchParams(hash.replace("#","?"));
-      const accessToken  = params.get("access_token");
-      const refreshToken = params.get("refresh_token");
-      if (accessToken) {
-        localStorage.setItem("sb_token",   accessToken);
-        localStorage.setItem("sb_refresh", refreshToken || "");
-        // Clean URL
-        window.history.replaceState(null, "", window.location.pathname);
-      }
+    // 1. Supabase returns token in EITHER hash (#access_token=) or query (?access_token=)
+    let accessToken  = null;
+    let refreshToken = null;
+
+    // Check hash first
+    if (window.location.hash.includes("access_token")) {
+      const p = new URLSearchParams(window.location.hash.replace("#", "?"));
+      accessToken  = p.get("access_token");
+      refreshToken = p.get("refresh_token");
+    }
+    // Then check query string
+    if (!accessToken && window.location.search.includes("access_token")) {
+      const p = new URLSearchParams(window.location.search);
+      accessToken  = p.get("access_token");
+      refreshToken = p.get("refresh_token");
     }
 
-    // 2. Try existing token
-    const storedToken = localStorage.getItem("sb_token");
+    if (accessToken) {
+      localStorage.setItem("sb_token",   accessToken);
+      localStorage.setItem("sb_refresh", refreshToken || "");
+      // Clean URL so token doesn't sit in address bar
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+
+    // 2. Try stored token
+    const storedToken = accessToken || localStorage.getItem("sb_token");
     if (!storedToken) { setLoading(false); return; }
 
-    // 3. Fetch user from Supabase
+    // 3. Verify token with Supabase and get user
     fetch(`${SB_URL}/auth/v1/user`, {
       headers: { "apikey": SB_KEY, "Authorization": `Bearer ${storedToken}` }
     })
-      .then(r => r.ok ? r.json() : null)
+      .then(r => r.ok ? r.json() : Promise.reject("invalid"))
       .then(u => {
-        if (!u?.id) { setLoading(false); return; }
-
-        // 4. Check UP email
-        if (!isUPEmail(u.email)) {
-          setError("Only @up.ac.za or @tuks.co.za email addresses are allowed.");
-          localStorage.removeItem("sb_token");
-          setLoading(false);
-          return;
-        }
-
+        if (!u?.id) { localStorage.removeItem("sb_token"); setLoading(false); return; }
         setUser(u);
         setToken(storedToken);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => {
+        localStorage.removeItem("sb_token");
+        setLoading(false);
+      });
   }, []);
 
   if (loading) return (
