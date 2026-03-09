@@ -1,7 +1,40 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-const STORAGE_KEY = "up_acaddesk_v3";
+// ─── Supabase config ─────────────────────────────────────────────────────────
+const SB_URL  = "https://qtjlnvubejdasgfaeiic.supabase.co";
+const SB_KEY  = "sb_publishable_m_H7ZdvVToxSrNz7et8olw_uQ_404H6";
+const SB_HEADERS = {
+  "Content-Type": "application/json",
+  "apikey": SB_KEY,
+  "Authorization": `Bearer ${SB_KEY}`,
+  "Prefer": "return=representation",
+};
+
+// ─── Supabase helpers ─────────────────────────────────────────────────────────
+async function sbLoad() {
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/acaddesk?id=eq.main&select=data`, { headers: SB_HEADERS });
+    const rows = await r.json();
+    if (rows?.[0]?.data?.modules) return rows[0].data;
+  } catch(e) { console.warn("Supabase load failed, using local:", e); }
+  // Fallback to localStorage if offline
+  try { const r = localStorage.getItem("acaddesk_cache"); return r ? JSON.parse(r) : null; } catch { return null; }
+}
+
+async function sbSave(data) {
+  // Always cache locally for offline resilience
+  try { localStorage.setItem("acaddesk_cache", JSON.stringify(data)); } catch {}
+  try {
+    await fetch(`${SB_URL}/rest/v1/acaddesk?id=eq.main`, {
+      method: "PATCH",
+      headers: { ...SB_HEADERS, "Prefer": "return=minimal" },
+      body: JSON.stringify({ data, updated_at: new Date().toISOString() })
+    });
+  } catch(e) { console.warn("Supabase save failed:", e); }
+}
+
+const STORAGE_KEY = "up_acaddesk_v3"; // kept for extension compat
 
 const PLATFORMS = {
   clickup: { label: "ClickUP", color: "#7C6AF7", bg: "#7C6AF718", icon: "◈", placeholder: "https://clickup.up.ac.za/..." },
@@ -14,36 +47,115 @@ const MODULE_COLORS = ["#7C6AF7","#F76A6A","#4ECDC4","#F7A84A","#A8E063","#F76AD
 const DEFAULT_DATA = {
   todos: [],
   modules: [
-    { id:"m1", code:"COS301", name:"Software Engineering",          color:"#7C6AF7", passMark:50, assignments:[
-      { id:"a1",  name:"Mini Project Phase 1", weight:15, mark:null, dueDate:"2025-03-20", link:"https://clickup.up.ac.za", platform:"clickup", notes:"UML diagrams + requirements doc", done:false },
-      { id:"a2",  name:"Mini Project Phase 2", weight:20, mark:null, dueDate:"2025-04-18", link:"",                          platform:"clickup", notes:"Architecture & design patterns",  done:false },
-      { id:"a3",  name:"Test 1",               weight:25, mark:72,   dueDate:"2025-03-10", link:"",                          platform:"clickup", notes:"Chapters 1–5",                    done:true  },
-      { id:"a4",  name:"Exam",                 weight:40, mark:null, dueDate:"2025-06-10", link:"",                          platform:"clickup", notes:"",                               done:false },
-    ]},
-    { id:"m2", code:"COS326", name:"Functional Programming",        color:"#F76A6A", passMark:50, assignments:[
-      { id:"a5",  name:"Haskell Assignment 1", weight:10, mark:85,   dueDate:"2025-03-05", link:"",                          platform:"clickup", notes:"Higher order functions",          done:true  },
-      { id:"a6",  name:"Haskell Assignment 2", weight:15, mark:null, dueDate:"2025-04-02", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Monads & type classes",           done:false },
-      { id:"a7",  name:"Test 1",               weight:25, mark:null, dueDate:"2025-03-28", link:"",                          platform:"clickup", notes:"",                               done:false },
-      { id:"a8",  name:"Exam",                 weight:50, mark:null, dueDate:"2025-06-15", link:"",                          platform:"clickup", notes:"",                               done:false },
-    ]},
-    { id:"m3", code:"COS332", name:"Computer Networks",             color:"#4ECDC4", passMark:50, assignments:[
-      { id:"a9",  name:"Practical 1",          weight:10, mark:78,   dueDate:"2025-03-07", link:"",                          platform:"clickup", notes:"Wireshark analysis",             done:true  },
-      { id:"a10", name:"Test 1",               weight:20, mark:null, dueDate:"2025-03-25", link:"",                          platform:"clickup", notes:"OSI layers, TCP/IP",             done:false },
-      { id:"a11", name:"Practical 2",          weight:10, mark:null, dueDate:"2025-04-10", link:"",                          platform:"clickup", notes:"",                               done:false },
-      { id:"a12", name:"Exam",                 weight:60, mark:null, dueDate:"2025-06-12", link:"",                          platform:"clickup", notes:"",                               done:false },
-    ]},
-    { id:"m4", code:"EBN",    name:"Engineering Business & Networks",color:"#F7A84A", passMark:50, assignments:[
-      { id:"a13", name:"Practical 1",          weight:10, mark:null, dueDate:"2025-03-22", link:"https://ams.up.ac.za",      platform:"ams",     notes:"Submit via AMS portal",         done:false },
-      { id:"a14", name:"Assignment 1",         weight:15, mark:null, dueDate:"2025-04-05", link:"https://ams.up.ac.za",      platform:"ams",     notes:"Check AMS for rubric & feedback",done:false },
-      { id:"a15", name:"Test 1",               weight:25, mark:null, dueDate:"2025-04-01", link:"",                          platform:"clickup", notes:"",                               done:false },
-      { id:"a16", name:"Exam",                 weight:50, mark:null, dueDate:"2025-06-18", link:"",                          platform:"clickup", notes:"",                               done:false },
-    ]},
+    // ── COS 212 — Data Structures & Algorithms ─────────────────────────────
+    // Assessments from Gradebook (sync via extension for exact dates/marks)
+    { id:"m1", code:"COS212", name:"Data Structures & Algorithms", color:"#7C6AF7", passMark:50,
+      assignments:[
+        { id:"a1",  name:"Tutorial 1 Test",   weight:3,  mark:null, dueDate:"2026-02-20", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/grades", platform:"clickup", notes:"Formative — sync from Gradebook for exact mark", done:false },
+        { id:"a2",  name:"Tutorial 2 Test",   weight:3,  mark:null, dueDate:"2026-02-27", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/grades", platform:"clickup", notes:"Formative", done:false },
+        { id:"a3",  name:"Tutorial 3 Test",   weight:3,  mark:null, dueDate:"2026-03-06", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/grades", platform:"clickup", notes:"Formative", done:false },
+        { id:"a4",  name:"Practical 1",       weight:10, mark:null, dueDate:"2026-03-07", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/grades", platform:"clickup", notes:"Sync from Gradebook for mark", done:false },
+        { id:"a5",  name:"Practical 2",       weight:10, mark:null, dueDate:"2026-04-10", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/grades", platform:"clickup", notes:"", done:false },
+        { id:"a6",  name:"Semester Test 1",   weight:25, mark:null, dueDate:"2026-04-01", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/grades", platform:"clickup", notes:"Check ClickUP for exact date", done:false },
+        { id:"a7",  name:"Exam",              weight:50, mark:null, dueDate:"2026-06-01", link:"https://clickup.up.ac.za/ultra/courses/_186927_1/grades", platform:"clickup", notes:"", done:false },
+      ]
+    },
+
+    // ── EBN 111 — Electricity & Electronics ────────────────────────────────
+    // Final mark: Semester mark 50% + Exam 50%
+    // Semester mark: ST1 35% + ST2 35% + Assignments 6% + Class Tests 12% + Practicals 12%
+    // As % of FINAL: ST1≈17.5%, ST2≈17.5%, Exam=50%, rest small
+    { id:"m2", code:"EBN111", name:"Electricity & Electronics", color:"#F7A84A", passMark:50,
+      assignments:[
+        { id:"b1",  name:"AMS Assignment 1",    weight:1, mark:null, dueDate:"2026-02-16", link:"https://ams.up.ac.za", platform:"ams", notes:"Ch 1 — Units, Charge, Current, Voltage", done:false },
+        { id:"b2",  name:"Pre-Practical 1",     weight:1, mark:null, dueDate:"2026-02-20", link:"https://ams.up.ac.za", platform:"ams", notes:"Submit on AMS before Practical 1", done:false },
+        { id:"b3",  name:"AMS Assignment 2",    weight:1, mark:null, dueDate:"2026-02-23", link:"https://ams.up.ac.za", platform:"ams", notes:"Ch 2 — Kirchhoff's Law", done:false },
+        { id:"b4",  name:"AMS Assignment 3",    weight:1, mark:null, dueDate:"2026-03-02", link:"https://ams.up.ac.za", platform:"ams", notes:"Ch 3 — Nodal Analysis", done:false },
+        { id:"b5",  name:"AMS Assignment 4",    weight:1, mark:null, dueDate:"2026-03-09", link:"https://ams.up.ac.za", platform:"ams", notes:"Ch 3 — Mesh Analysis", done:false },
+        { id:"b6",  name:"Class Test 1",        weight:6, mark:null, dueDate:"2026-03-06", link:"https://ams.up.ac.za", platform:"ams", notes:"Chapters 1, 2, 3.2–3.3", done:false },
+        { id:"b7",  name:"AMS Assignment 5",    weight:1, mark:null, dueDate:"2026-03-16", link:"https://ams.up.ac.za", platform:"ams", notes:"Ch 4 — Superposition", done:false },
+        { id:"b8",  name:"Semester Test 1",     weight:18, mark:null, dueDate:"2026-03-18", link:"https://ams.up.ac.za", platform:"ams", notes:"Week of 16–20 Mar. Chapters 1–3 & 4.2–4.4", done:false },
+        { id:"b9",  name:"Practical 1",         weight:2, mark:null, dueDate:"2026-03-06", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Turning on an LED in a resistor network", done:false },
+        { id:"b10", name:"AMS Assignment 6",    weight:1, mark:null, dueDate:"2026-03-30", link:"https://ams.up.ac.za", platform:"ams", notes:"Ch 4 — Norton's Theorem", done:false },
+        { id:"b11", name:"Pre-Practical 2",     weight:1, mark:null, dueDate:"2026-04-10", link:"https://ams.up.ac.za", platform:"ams", notes:"Submit on AMS before Practical 2", done:false },
+        { id:"b12", name:"AMS Assignment 7",    weight:1, mark:null, dueDate:"2026-04-13", link:"https://ams.up.ac.za", platform:"ams", notes:"Ch 5 — Op Amps", done:false },
+        { id:"b13", name:"Class Test 2",        weight:6, mark:null, dueDate:"2026-04-28", link:"https://ams.up.ac.za", platform:"ams", notes:"Chapters 4–6", done:false },
+        { id:"b14", name:"Pre-Practical 3",     weight:1, mark:null, dueDate:"2026-04-27", link:"https://ams.up.ac.za", platform:"ams", notes:"Submit on AMS before Practical 3", done:false },
+        { id:"b15", name:"Practical 2",         weight:2, mark:null, dueDate:"2026-04-10", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Using a transistor as a switch", done:false },
+        { id:"b16", name:"AMS Assignment 8",    weight:1, mark:null, dueDate:"2026-04-27", link:"https://ams.up.ac.za", platform:"ams", notes:"", done:false },
+        { id:"b17", name:"Semester Test 2",     weight:18, mark:null, dueDate:"2026-05-06", link:"https://ams.up.ac.za", platform:"ams", notes:"Week of 4–8 May. Chapters 4, 5, 6 & 9", done:false },
+        { id:"b18", name:"Practical 3",         weight:2, mark:null, dueDate:"2026-05-08", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Using an op-amp to turn on an LED", done:false },
+        { id:"b19", name:"AMS Assignment 9",    weight:1, mark:null, dueDate:"2026-05-18", link:"https://ams.up.ac.za", platform:"ams", notes:"", done:false },
+        { id:"b20", name:"Exam",                weight:50, mark:null, dueDate:"2026-06-10", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Closed book. Min 40% required to pass", done:false },
+      ]
+    },
+
+    // ── EJJ 210 — Engineering Communication ────────────────────────────────
+    // No exam — semester mark = 100%
+    // Tutorials 1-6: 7.5% each = 45%, Tutorials 8&10: 15% each = 30%, Oral: 15%, Homework: 10%
+    { id:"m3", code:"EJJ210", name:"Engineering Communication", color:"#4ECDC4", passMark:50,
+      assignments:[
+        { id:"c1",  name:"Homework 1",        weight:2,  mark:null, dueDate:"2026-02-16", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU1 — Non-session assignment", done:false },
+        { id:"c2",  name:"Tutorial 1",        weight:8,  mark:null, dueDate:"2026-02-16", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU1 — Session-based, rubric marked", done:false },
+        { id:"c3",  name:"Homework 2",        weight:2,  mark:null, dueDate:"2026-02-23", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU2", done:false },
+        { id:"c4",  name:"Tutorial 2",        weight:8,  mark:null, dueDate:"2026-02-23", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU2 — Oral presentation prep", done:false },
+        { id:"c5",  name:"Oral Presentation", weight:15, mark:null, dueDate:"2026-03-20", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Slots: 20 Mar or 5 May. Min 40% required", done:false },
+        { id:"c6",  name:"Tutorial 3",        weight:8,  mark:null, dueDate:"2026-03-09", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU3", done:false },
+        { id:"c7",  name:"Tutorial 4",        weight:8,  mark:null, dueDate:"2026-03-23", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU4", done:false },
+        { id:"c8",  name:"Tutorial 5",        weight:8,  mark:null, dueDate:"2026-04-13", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU4", done:false },
+        { id:"c9",  name:"Tutorial 6",        weight:8,  mark:null, dueDate:"2026-04-20", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU5", done:false },
+        { id:"c10", name:"Tutorial 7",        weight:0,  mark:null, dueDate:"2026-04-27", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU6 — Attendance only, no mark", done:false },
+        { id:"c11", name:"Tutorial 8",        weight:15, mark:null, dueDate:"2026-05-04", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU6 — Rubric marked. Min avg 40% for T8&T10", done:false },
+        { id:"c12", name:"Tutorial 9",        weight:0,  mark:null, dueDate:"2026-05-11", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU7 — Attendance only", done:false },
+        { id:"c13", name:"Tutorial 10",       weight:15, mark:null, dueDate:"2026-05-18", link:"https://clickup.up.ac.za", platform:"clickup", notes:"SU7 — Rubric marked. Min avg 40% for T8&T10", done:false },
+      ]
+    },
+
+    // ── JCP 203 — Physics (Year module) ────────────────────────────────────
+    // Placeholders — no study guide provided yet
+    { id:"m4", code:"JCP203", name:"Physics", color:"#F76A6A", passMark:50,
+      assignments:[
+        { id:"d1", name:"Semester Test 1", weight:25, mark:null, dueDate:"2026-03-20", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Update dates from study guide", done:false },
+        { id:"d2", name:"Semester Test 2", weight:25, mark:null, dueDate:"2026-08-01", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Semester 2 — update date", done:false },
+        { id:"d3", name:"Exam",            weight:50, mark:null, dueDate:"2026-11-01", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Year module — June or Nov exam", done:false },
+      ]
+    },
+
+    // ── JSU 110 — (no study guide yet) ─────────────────────────────────────
+    { id:"m5", code:"JSU110", name:"JSU 110", color:"#A8E063", passMark:50,
+      assignments:[
+        { id:"e1", name:"Semester Test 1", weight:30, mark:null, dueDate:"2026-03-20", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Update from study guide", done:false },
+        { id:"e2", name:"Semester Test 2", weight:30, mark:null, dueDate:"2026-05-08", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Update from study guide", done:false },
+        { id:"e3", name:"Exam",            weight:40, mark:null, dueDate:"2026-06-10", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Update from study guide", done:false },
+      ]
+    },
+
+    // ── NMC 113 — Materials Science & Engineering ───────────────────────────
+    // Final mark: Semester mark 50% + Exam 50%
+    // SM breakdown: Semester tests 60% (30% each) + Lab 10% + Class tests 10% + Tutorials 10% + Wiley Plus 10%
+    // As % of FINAL: ST1=15%, ST2=15%, Lab=5%, ClassTests=5%, Tutorials=5%, WileyPlus=5%, Exam=50%
+    { id:"m6", code:"NMC113", name:"Materials Science & Engineering", color:"#F76AD3", passMark:50,
+      assignments:[
+        { id:"f1", name:"Wiley Plus (Online)",  weight:5,  mark:null, dueDate:"2026-05-22", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Continuous online assessment — 10% of SM", done:false },
+        { id:"f2", name:"Class Test 1",         weight:3,  mark:null, dueDate:"2026-03-13", link:"https://clickup.up.ac.za", platform:"clickup", notes:"During lecture. 10% of SM total for class tests", done:false },
+        { id:"f3", name:"Class Test 2",         weight:3,  mark:null, dueDate:"2026-04-24", link:"https://clickup.up.ac.za", platform:"clickup", notes:"During lecture", done:false },
+        { id:"f4", name:"Practical 1",          weight:1,  mark:null, dueDate:"2026-03-06", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Lab — Room 4-19 Mineral Sciences. Min 50% avg for all labs", done:false },
+        { id:"f5", name:"Practical 2",          weight:1,  mark:null, dueDate:"2026-03-27", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Lab", done:false },
+        { id:"f6", name:"Practical 3",          weight:1,  mark:null, dueDate:"2026-04-17", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Lab", done:false },
+        { id:"f7", name:"Practical 4",          weight:2,  mark:null, dueDate:"2026-05-08", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Lab — last practical", done:false },
+        { id:"f8", name:"Tutorial Classes",     weight:5,  mark:null, dueDate:"2026-05-22", link:"https://clickup.up.ac.za", platform:"clickup", notes:"10% of SM — ongoing throughout semester", done:false },
+        { id:"f9", name:"Semester Test 1",      weight:15, mark:null, dueDate:"2026-03-20", link:"https://clickup.up.ac.za", platform:"clickup", notes:"90 min. 30% of SM = 15% of final", done:false },
+        { id:"f10",name:"Semester Test 2",      weight:15, mark:null, dueDate:"2026-05-05", link:"https://clickup.up.ac.za", platform:"clickup", notes:"90 min. 30% of SM = 15% of final", done:false },
+        { id:"f11",name:"Exam",                 weight:50, mark:null, dueDate:"2026-06-10", link:"https://clickup.up.ac.za", platform:"clickup", notes:"Min 40% exam mark required to pass", done:false },
+      ]
+    },
   ],
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-const loadData  = () => { try { const r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : DEFAULT_DATA; } catch { return DEFAULT_DATA; } };
-const saveData  = d  => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {} };
+// loadData — sync fallback only (actual load happens async in useEffect)
+const loadData  = () => { try { const r = localStorage.getItem("acaddesk_cache"); return r ? JSON.parse(r) : DEFAULT_DATA; } catch { return DEFAULT_DATA; } };
+const saveData  = d  => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {} }; // kept for extension
 const daysUntil = ds => Math.ceil((new Date(ds) - new Date()) / 86400000);
 const urgColor  = d  => d < 0 ? "#666" : d <= 3 ? "#F76A6A" : d <= 7 ? "#F7C56A" : "#4ECDC4";
 const fmtDate   = ds => new Date(ds).toLocaleDateString("en-ZA", { day:"numeric", month:"short" });
@@ -87,18 +199,18 @@ function FilterBar({modules, filters, setFilters, isMobile}){
   };
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
-      {/* Module filter — horizontal scroll */}
-      <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:2}}>
+    <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16,width:"100%",maxWidth:"100%",overflow:"hidden"}}>
+      {/* Module filter — horizontal scroll, clipped to viewport */}
+      <div className="hide-scroll" style={{display:"flex",gap:6,overflowX:"auto",overflowY:"hidden",paddingBottom:2,width:"100%",WebkitOverflowScrolling:"touch"}}>
         {pill("module","all","All modules")}
         {modules.map(m=>pill("module",m.id,m.code,m.color))}
       </div>
-      {/* Deadline + Weight + Platform */}
-      <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:2}}>
+      {/* Deadline + Weight + Platform — scrollable row */}
+      <div className="hide-scroll" style={{display:"flex",gap:6,overflowX:"auto",overflowY:"hidden",paddingBottom:2,width:"100%",WebkitOverflowScrolling:"touch"}}>
         {DEADLINE_OPTS.map(o=>pill("deadline",o.v,o.l))}
-        <span style={{color:"#2a2a2e",alignSelf:"center",margin:"0 2px"}}>|</span>
+        <span style={{color:"#2a2a2e",alignSelf:"center",margin:"0 2px",flexShrink:0}}>|</span>
         {WEIGHT_OPTS.map(o=>pill("weight",o.v,o.l))}
-        <span style={{color:"#2a2a2e",alignSelf:"center",margin:"0 2px"}}>|</span>
+        <span style={{color:"#2a2a2e",alignSelf:"center",margin:"0 2px",flexShrink:0}}>|</span>
         {PLATFORM_OPTS.map(o=>pill("platform",o.v,o.l))}
       </div>
     </div>
@@ -256,16 +368,69 @@ export default function App() {
     return () => window.removeEventListener("resize", handler);
   }, []);
 
-  // Persist on every data change (real-time save)
-  useEffect(() => { saveData(data); }, [data]);
+  // ── Supabase: initial load ────────────────────────────────────────────────
+  const [syncStatus, setSyncStatus] = useState("loading"); // "loading"|"live"|"offline"
+  const saveTimer   = useRef(null);
+  const isRemote    = useRef(false); // flag to skip save when change came from remote
 
-  // Listen for external writes (e.g. browser extension syncing data in)
+  useEffect(() => {
+    sbLoad().then(remote => {
+      if (remote?.modules) {
+        setData(remote);
+        setSyncStatus("live");
+      } else {
+        setSyncStatus("offline");
+      }
+    });
+  }, []);
+
+  // ── Supabase: save on every data change (debounced 800ms) ────────────────
+  useEffect(() => {
+    if (isRemote.current) { isRemote.current = false; return; }
+    // Also write to localStorage so extension can still read it
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      sbSave(data).then(() => setSyncStatus("live")).catch(() => setSyncStatus("offline"));
+    }, 800);
+    return () => clearTimeout(saveTimer.current);
+  }, [data]);
+
+  // ── Supabase: realtime subscription (long-poll every 5s) ─────────────────
+  // Supabase realtime requires the client library; we use a lightweight polling approach instead
+  useEffect(() => {
+    let interval = setInterval(async () => {
+      try {
+        const r = await fetch(
+          `${SB_URL}/rest/v1/acaddesk?id=eq.main&select=data,updated_at`,
+          { headers: SB_HEADERS }
+        );
+        const rows = await r.json();
+        const remote = rows?.[0];
+        if (!remote?.data?.modules) return;
+        // Only update if remote is newer than our last save
+        const remoteTime = new Date(remote.updated_at).getTime();
+        const localTime  = new Date(window._lastSave || 0).getTime();
+        if (remoteTime > localTime + 1000) {
+          isRemote.current = true;
+          setData(remote.data);
+          setSyncStatus("live");
+        }
+      } catch { setSyncStatus("offline"); }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Track our own save time so we don't loop
+  useEffect(() => { window._lastSave = new Date().toISOString(); }, [data]);
+
+  // ── Extension writes (localStorage) ──────────────────────────────────────
   useEffect(() => {
     const handler = (e) => {
       if (e.key === STORAGE_KEY && e.newValue) {
         try {
           const incoming = JSON.parse(e.newValue);
-          if (incoming?.modules) setData(incoming);
+          if (incoming?.modules) { setData(incoming); sbSave(incoming); }
         } catch {}
       }
     };
@@ -319,13 +484,43 @@ export default function App() {
   }, [data]);
 
   // ── Today's tasks ──────────────────────────────────────────────────────────
-  const addTodo    = useCallback((text) => {
+  // Survival logic: runs once on mount
+  // A task is kept if: created today OR ever checked off. Otherwise deleted after 1 day.
+  useEffect(() => {
+    const today = new Date().toISOString().slice(0,10);
+    setData(d => ({
+      ...d,
+      todos: (d.todos||[]).filter(t => {
+        const createdDay = (t.createdAt||"").slice(0,10);
+        const isToday    = createdDay === today;
+        const everDone   = !!t.everDone; // set true when first checked
+        const dayOld     = createdDay < today;
+        // Keep if: created today, or ever worked on (checked at any point)
+        // Remove if: never touched AND at least 1 day old
+        if (isToday) return true;
+        if (everDone) return true;
+        if (dayOld && !everDone) return false;
+        return true;
+      })
+    }));
+  }, []); // eslint-disable-line
+
+  const addTodo = useCallback((text, moduleId) => {
     if (!text.trim()) return;
-    setData(d => ({...d, todos: [...(d.todos||[]), {id:"t"+Date.now(), text:text.trim(), done:false, createdAt:new Date().toISOString()}]}));
+    setData(d => ({...d, todos: [...(d.todos||[]), {
+      id: "t"+Date.now(),
+      text: text.trim(),
+      done: false,
+      everDone: false,
+      moduleId: moduleId || null,
+      createdAt: new Date().toISOString(),
+    }]}));
   }, []);
 
   const toggleTodo = useCallback((id) => {
-    setData(d => ({...d, todos: (d.todos||[]).map(t => t.id===id ? {...t, done:!t.done} : t)}));
+    setData(d => ({...d, todos: (d.todos||[]).map(t =>
+      t.id===id ? {...t, done:!t.done, everDone: t.everDone || !t.done} : t
+    )}));
   }, []);
 
   const deleteTodo = useCallback((id) => {
@@ -337,9 +532,9 @@ export default function App() {
 
   // ── Styles ──────────────────────────────────────────────────────────────────
   const s = {
-    page:    { fontFamily:"'DM Mono','Fira Code',monospace", background:"#0A0A0C", minHeight:"100%", color:"#E0E0DE" },
-    header:  { borderBottom:"1px solid #1c1c20", padding:"0 32px", display:"flex", alignItems:"center", justifyContent:"space-between", height:56, position:"sticky", top:0, background:"#0A0A0C", zIndex:100 },
-    content: { padding: isMobile ? "16px 14px 100px" : "28px 40px 48px" },
+    page:    { fontFamily:"'DM Mono','Fira Code',monospace", background:"#0A0A0C", color:"#E0E0DE", overflowX:"hidden", width:"100%", maxWidth:"100vw" },
+    header:  { borderBottom:"1px solid #1c1c20", padding: isMobile ? "0 14px" : "0 32px", display:"flex", alignItems:"center", justifyContent:"space-between", height:52, position:"sticky", top:0, background:"#0A0A0C", zIndex:100, width:"100%", maxWidth:"100vw", boxSizing:"border-box" },
+    content: { padding: isMobile ? "14px 12px 100px" : "28px 40px 48px", width:"100%", maxWidth:"100vw", overflowX:"hidden", boxSizing:"border-box" },
     card:    { background:"#131315", border:"1px solid #1e1e22", borderRadius:12, padding: isMobile ? 14 : 22 },
     sectionLabel: { fontSize:10, color:"#555", letterSpacing:1.2, marginBottom:12, fontWeight:600 },
     btn:     (bg,col,border) => ({ padding:"8px 16px", borderRadius:8, fontSize:12, fontFamily:"inherit", background:bg, color:col, border:`1px solid ${border}`, cursor:"pointer", fontWeight:600, transition:"all .15s" }),
@@ -350,6 +545,10 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@600;700;800&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
+        html { overflow-x: hidden; overflow-y: auto; max-width: 100vw; height: 100%; background: #0A0A0C; }
+        body { overflow-x: hidden; overflow-y: auto; width: 100%; max-width: 100vw; height: auto; min-height: 100%; background: #0A0A0C; margin: 0; }
+        #root { min-height: 100dvh; height: auto; width: 100vw; max-width: 100vw; overflow-x: hidden; background: #0A0A0C; }
+        .hide-scroll::-webkit-scrollbar { display: none; }
         ::-webkit-scrollbar { width: 3px; height: 3px; }
         ::-webkit-scrollbar-track { background: #111; }
         ::-webkit-scrollbar-thumb { background: #2a2a2e; border-radius: 2px; }
@@ -369,15 +568,19 @@ export default function App() {
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <div style={{width:26,height:26,borderRadius:7,background:"linear-gradient(135deg,#7C6AF7,#F7A84A)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"white",fontFamily:"Syne,sans-serif",flexShrink:0}}>UP</div>
           <span style={{fontFamily:"Syne,sans-serif",fontWeight:800,fontSize:14,letterSpacing:.3}}>AcadDesk</span>
+          <span title={syncStatus==="live"?"Synced":syncStatus==="loading"?"Connecting...":"Offline — changes saved locally"} style={{
+            width:7, height:7, borderRadius:"50%", flexShrink:0,
+            background: syncStatus==="live"?"#4ECDC4": syncStatus==="loading"?"#F7A84A":"#F76A6A",
+            boxShadow: syncStatus==="live"?"0 0 6px #4ECDC4":"none",
+            transition:"background .5s"
+          }}/>
           {activeM && mod && !isMobile && <>
             <span style={{color:"#333",margin:"0 4px"}}>/</span>
             <span style={{fontSize:12,color:mod.color,fontWeight:600}}>{mod.code}</span>
           </>}
         </div>
         {isMobile ? (
-          <button onClick={()=>setNavOpen(v=>!v)} style={{background:"none",border:"1px solid #2a2a2e",color:"#888",padding:"5px 10px",borderRadius:7,fontSize:12,fontFamily:"inherit",cursor:"pointer"}}>
-            {navOpen?"✕":"☰ Menu"}
-          </button>
+  <div/>
         ) : (
           <div style={{display:"flex",gap:2}}>
             {[["dashboard","Dashboard"],["calendar","Timeline"],["grades","Grades"]].map(([v,l])=>(
@@ -387,15 +590,7 @@ export default function App() {
         )}
       </div>
 
-      {/* Mobile nav dropdown */}
-      {isMobile && navOpen && (
-        <div style={{background:"#131315",borderBottom:"1px solid #1e1e22",padding:"8px 14px",display:"flex",flexDirection:"column",gap:4,position:"sticky",top:52,zIndex:99}}>
-          {[["dashboard","Dashboard"],["calendar","Timeline"],["grades","Grades"]].map(([v,l])=>(
-            <button key={v} onClick={()=>goTo(v)} style={{padding:"10px 12px",borderRadius:8,fontSize:13,fontFamily:"inherit",background:view===v?"#1e1e22":"transparent",color:view===v?"#E0E0DE":"#666",border:"none",cursor:"pointer",textAlign:"left"}}>{l}</button>
-          ))}
-          {activeM && <button onClick={()=>{setActiveM(null);setNavOpen(false);}} style={{padding:"10px 12px",borderRadius:8,fontSize:12,fontFamily:"inherit",background:"transparent",color:"#888",border:"none",cursor:"pointer",textAlign:"left"}}>← Back to Dashboard</button>}
-        </div>
-      )}
+
 
       <div style={s.content}>
 
@@ -412,13 +607,13 @@ export default function App() {
           <FilterBar modules={data.modules} filters={filters} setFilters={setFilters} isMobile={isMobile}/>
 
           {/* Today's Tasks */}
-          <TodayTasks todos={data.todos||[]} onAdd={addTodo} onToggle={toggleTodo} onDelete={deleteTodo} isMobile={isMobile} card={s.card} sectionLabel={s.sectionLabel}/>
+          <TodayTasks todos={data.todos||[]} modules={data.modules} onAdd={addTodo} onToggle={toggleTodo} onDelete={deleteTodo} isMobile={isMobile} card={s.card} sectionLabel={s.sectionLabel}/>
 
-          {/* Two-column layout on desktop */}
-          <div style={{display:"grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(340px,400px) 1fr", gap:20, alignItems:"start"}}>
+          {/* Responsive layout — single col mobile, two col desktop */}
+          <div style={isMobile ? {display:"flex",flexDirection:"column",gap:16,width:"100%"} : {display:"grid",gridTemplateColumns:"380px 1fr",gap:24,alignItems:"start",width:"100%"}}>
 
-          {/* LEFT: Upcoming deadlines */}
-          <div style={{...s.card, minWidth:0}}>
+          {/* LEFT col: Upcoming deadlines */}
+          <div style={{...s.card, minWidth:0, width:"100%", overflow:"hidden"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
               <p style={s.sectionLabel}>UPCOMING DEADLINES {filteredUpcoming.length!==upcomingAll.length&&`(${filteredUpcoming.length}/${upcomingAll.length})`}</p>
               {filters.module!=="all"||filters.deadline!=="all"||filters.weight!=="all"||filters.platform!=="all"
@@ -456,9 +651,9 @@ export default function App() {
           </div>
 
           {/* RIGHT: Module cards */}
-          <div>
+          <div style={{minWidth:0, width:"100%"}}>
           <p style={{...s.sectionLabel, marginBottom:12}}>MODULES</p>
-          <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill,minmax(240px,1fr))",gap:12,marginBottom:12}}>
+          <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill,minmax(220px,1fr))",gap:12,marginBottom:12,width:"100%"}}>
             {data.modules.map(m=>{
               const grade   = calcGrade(m.assignments);
               const pending = m.assignments.filter(a=>!a.done).length;
@@ -522,6 +717,18 @@ export default function App() {
               <span style={{fontSize:13,fontFamily:"Syne,sans-serif",fontWeight:700,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{mod.name}</span>
             </div>
           )}
+
+          {/* Daily tasks for this module */}
+          <ModuleTodayTasks
+            todos={(data.todos||[]).filter(t=>t.moduleId===mod.id)}
+            mod={mod}
+            onAdd={(text)=>addTodo(text, mod.id)}
+            onToggle={toggleTodo}
+            onDelete={deleteTodo}
+            isMobile={isMobile}
+            card={s.card}
+            sectionLabel={s.sectionLabel}
+          />
 
           {/* Grade summary */}
           <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:10,marginBottom:18}}>
@@ -676,7 +883,7 @@ export default function App() {
 
       {/* Mobile bottom nav */}
       {isMobile && (
-        <div style={{position:"fixed",bottom:0,left:0,right:0,background:"#0F0F12",borderTop:"1px solid #1c1c20",display:"flex",zIndex:100,paddingBottom:"env(safe-area-inset-bottom,0px)"}}>
+        <div style={{position:"fixed",bottom:0,left:0,right:0,width:"100%",background:"#0F0F12",borderTop:"1px solid #1c1c20",display:"flex",zIndex:100,paddingBottom:"env(safe-area-inset-bottom,0px)"}}>
           {[["dashboard","⊞","Home"],["calendar","◷","Timeline"],["grades","◎","Grades"]].map(([v,icon,l])=>(
             <button key={v} onClick={()=>goTo(v)} style={{flex:1,padding:"10px 0 12px",background:"none",border:"none",cursor:"pointer",color:view===v?"#7C6AF7":"#555",fontSize:9,fontFamily:"inherit",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
               <span style={{fontSize:18,lineHeight:1}}>{icon}</span>{l}
@@ -716,10 +923,169 @@ export default function App() {
 }
 
 // ─── Today's Tasks component ─────────────────────────────────────────────────
-function TodayTasks({ todos, onAdd, onToggle, onDelete, isMobile, card, sectionLabel }) {
-  const [input, setInput] = useState("");
+function TodayTasks({ todos, modules, onAdd, onToggle, onDelete, isMobile, card, sectionLabel }) {
+  const [input, setInput]       = useState("");
+  const [moduleId, setModuleId] = useState("none");
+  const [showDone, setShowDone] = useState(false);
+
   const pending   = todos.filter(t => !t.done);
   const completed = todos.filter(t => t.done);
+
+  const getModule = (id) => modules.find(m => m.id === id) || null;
+
+  const handleAdd = () => {
+    if (!input.trim()) return;
+    onAdd(input, moduleId === "none" ? null : moduleId);
+    setInput("");
+    setModuleId("none");
+  };
+
+  const today = new Date().toISOString().slice(0,10);
+  const isNew  = (t) => (t.createdAt||"").slice(0,10) === today;
+
+  return (
+    <div style={{...card, marginBottom:20, width:"100%"}}>
+
+      {/* Header */}
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14}}>
+        <div style={{display:"flex", alignItems:"center", gap:8}}>
+          <p style={{...sectionLabel, marginBottom:0}}>TODAY'S TASKS</p>
+          {pending.length > 0 && (
+            <span style={{background:"#7C6AF722", color:"#7C6AF7", fontSize:10, fontWeight:700,
+              padding:"1px 7px", borderRadius:10, border:"1px solid #7C6AF733"}}>
+              {pending.length}
+            </span>
+          )}
+        </div>
+        {completed.length > 0 && (
+          <button onClick={() => setShowDone(s=>!s)}
+            style={{background:"none", border:"none", color:"#555", fontSize:10, cursor:"pointer",
+              fontFamily:"inherit", padding:0}}>
+            {showDone ? "hide" : `${completed.length} done ↓`}
+          </button>
+        )}
+      </div>
+
+      {/* Add task row */}
+      <div style={{display:"flex", gap:8, marginBottom: todos.length > 0 ? 14 : 0,
+        flexDirection: isMobile ? "column" : "row"}}>
+        <input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && handleAdd()}
+          placeholder="Add a task for today... (Enter to add)"
+          style={{flex:1, background:"#0d0d0f", border:"1px solid #2a2a2e", color:"#E0E0DE",
+            padding:"9px 12px", borderRadius:8, fontFamily:"inherit", fontSize:12,
+            outline:"none", width: isMobile ? "100%" : "auto"}}
+        />
+        {/* Module picker */}
+        <select
+          value={moduleId}
+          onChange={e => setModuleId(e.target.value)}
+          style={{background:"#0d0d0f", border:"1px solid #2a2a2e", color: moduleId==="none" ? "#555" : "#E0E0DE",
+            padding:"9px 10px", borderRadius:8, fontFamily:"inherit", fontSize:12,
+            outline:"none", cursor:"pointer", width: isMobile ? "100%" : "auto",
+            minWidth:120, flexShrink:0}}>
+          <option value="none">Personal</option>
+          {modules.map(m => (
+            <option key={m.id} value={m.id}>{m.code}</option>
+          ))}
+        </select>
+        <button onClick={handleAdd}
+          style={{padding:"9px 16px", borderRadius:8, background:"#7C6AF722", color:"#7C6AF7",
+            border:"1px solid #7C6AF733", fontFamily:"inherit", fontSize:12, fontWeight:600,
+            cursor:"pointer", whiteSpace:"nowrap", flexShrink:0}}>
+          + Add
+        </button>
+      </div>
+
+      {/* Pending tasks */}
+      {pending.length > 0 && (
+        <div style={{display:"flex", flexDirection:"column", gap:6,
+          marginBottom: completed.length > 0 && showDone ? 12 : 0}}>
+          {pending.map(t => {
+            const mod   = getModule(t.moduleId);
+            const color = mod ? mod.color : "#555";
+            return (
+              <div key={t.id} style={{display:"flex", alignItems:"center", gap:10,
+                padding:"9px 12px", background:"#0d0d0f", borderRadius:8,
+                border:`1px solid ${mod ? color+"33" : "#1e1e22"}`,
+                borderLeft: mod ? `3px solid ${color}` : "1px solid #1e1e22"}}>
+                <input type="checkbox" checked={false} onChange={() => onToggle(t.id)}
+                  style={{width:15, height:15, accentColor: mod ? color : "#7C6AF7",
+                    cursor:"pointer", flexShrink:0}}/>
+                <div style={{flex:1, minWidth:0}}>
+                  <div style={{fontSize:13, color:"#E0E0DE", overflow:"hidden",
+                    textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{t.text}</div>
+                  <div style={{display:"flex", alignItems:"center", gap:6, marginTop:2}}>
+                    {mod
+                      ? <span style={{fontSize:10, color:color, fontWeight:600}}>{mod.code}</span>
+                      : <span style={{fontSize:10, color:"#444"}}>Personal</span>
+                    }
+                    {!isNew(t) && (
+                      <span style={{fontSize:9, color:"#F7A84A", background:"#F7A84A11",
+                        padding:"1px 5px", borderRadius:4, border:"1px solid #F7A84A22"}}>
+                        carried over
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <button onClick={() => onDelete(t.id)}
+                  style={{background:"none", border:"none", color:"#333", fontSize:16,
+                    cursor:"pointer", padding:"0 2px", lineHeight:1, flexShrink:0}}
+                  onMouseEnter={e => e.currentTarget.style.color="#F76A6A"}
+                  onMouseLeave={e => e.currentTarget.style.color="#333"}>×</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Completed tasks — collapsible */}
+      {completed.length > 0 && showDone && (
+        <div style={{display:"flex", flexDirection:"column", gap:5}}>
+          <div style={{fontSize:10, color:"#444", letterSpacing:.8, marginBottom:4}}>COMPLETED</div>
+          {completed.map(t => {
+            const mod   = getModule(t.moduleId);
+            const color = mod ? mod.color : "#4ECDC4";
+            return (
+              <div key={t.id} style={{display:"flex", alignItems:"center", gap:10,
+                padding:"7px 12px", borderRadius:8, opacity:0.5,
+                borderLeft: mod ? `3px solid ${color}` : "1px solid transparent"}}>
+                <input type="checkbox" checked={true} onChange={() => onToggle(t.id)}
+                  style={{width:15, height:15, accentColor:"#4ECDC4", cursor:"pointer", flexShrink:0}}/>
+                <div style={{flex:1, minWidth:0}}>
+                  <div style={{fontSize:12, color:"#666", textDecoration:"line-through",
+                    overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{t.text}</div>
+                  {mod && <span style={{fontSize:10, color:color}}>{mod.code}</span>}
+                </div>
+                <button onClick={() => onDelete(t.id)}
+                  style={{background:"none", border:"none", color:"#333", fontSize:16,
+                    cursor:"pointer", padding:"0 2px", lineHeight:1}}>×</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {todos.length === 0 && (
+        <p style={{color:"#333", fontSize:12, padding:"4px 0"}}>
+          No tasks yet — add one above ↑
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─── Module Daily Tasks (shown at top of module detail page) ──────────────────
+function ModuleTodayTasks({ todos, mod, onAdd, onToggle, onDelete, isMobile, card, sectionLabel }) {
+  const [input, setInput]   = useState("");
+  const [expanded, setExpanded] = useState(true);
+
+  const pending   = todos.filter(t => !t.done);
+  const completed = todos.filter(t => t.done);
+  const today     = new Date().toISOString().slice(0,10);
+  const isNew     = (t) => (t.createdAt||"").slice(0,10) === today;
 
   const handleAdd = () => {
     if (!input.trim()) return;
@@ -728,72 +1094,119 @@ function TodayTasks({ todos, onAdd, onToggle, onDelete, isMobile, card, sectionL
   };
 
   return (
-    <div style={{...card, marginBottom:20}}>
-      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14}}>
+    <div style={{
+      marginBottom: 18,
+      borderRadius: 12,
+      border: `1px solid ${mod.color}33`,
+      borderLeft: `3px solid ${mod.color}`,
+      background: "#131315",
+      overflow: "hidden",
+    }}>
+      {/* Header — always visible, click to collapse */}
+      <div
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: isMobile ? "11px 14px" : "13px 18px",
+          cursor: "pointer", userSelect: "none",
+        }}>
         <div style={{display:"flex", alignItems:"center", gap:8}}>
-          <p style={{...sectionLabel, marginBottom:0}}>TODAY'S TASKS</p>
+          <span style={{fontSize:10, color:mod.color, fontWeight:700, letterSpacing:1.2}}>
+            TODAY'S TASKS
+          </span>
           {pending.length > 0 && (
-            <span style={{background:"#7C6AF722", color:"#7C6AF7", fontSize:10, fontWeight:700, padding:"1px 7px", borderRadius:10, border:"1px solid #7C6AF733"}}>
-              {pending.length}
-            </span>
+            <span style={{
+              background: mod.color+"22", color: mod.color,
+              fontSize:10, fontWeight:700, padding:"1px 7px",
+              borderRadius:10, border:`1px solid ${mod.color}33`
+            }}>{pending.length}</span>
+          )}
+          {completed.length > 0 && (
+            <span style={{fontSize:10, color:"#555"}}>{completed.length} done</span>
           )}
         </div>
-        {completed.length > 0 && (
-          <span style={{fontSize:10, color:"#555"}}>{completed.length} done</span>
-        )}
+        <span style={{fontSize:12, color:"#555"}}>{expanded ? "▲" : "▼"}</span>
       </div>
 
-      {/* Add task input */}
-      <div style={{display:"flex", gap:8, marginBottom: todos.length > 0 ? 14 : 0}}>
-        <input
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && handleAdd()}
-          placeholder="Add a task for today... (press Enter)"
-          style={{flex:1, background:"#0d0d0f", border:"1px solid #2a2a2e", color:"#E0E0DE", padding:"9px 12px", borderRadius:8, fontFamily:"inherit", fontSize:12, outline:"none"}}
-        />
-        <button
-          onClick={handleAdd}
-          style={{padding:"9px 14px", borderRadius:8, background:"#7C6AF722", color:"#7C6AF7", border:"1px solid #7C6AF733", fontFamily:"inherit", fontSize:12, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap"}}>
-          + Add
-        </button>
-      </div>
+      {expanded && (
+        <div style={{padding: isMobile ? "0 14px 14px" : "0 18px 16px"}}>
 
-      {/* Pending tasks */}
-      {pending.length > 0 && (
-        <div style={{display:"flex", flexDirection:"column", gap:6, marginBottom: completed.length > 0 ? 10 : 0}}>
+          {/* Add input */}
+          <div style={{
+            display:"flex", gap:8, marginBottom: todos.length > 0 ? 12 : 0,
+            flexDirection: isMobile ? "column" : "row"
+          }}>
+            <input
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleAdd()}
+              placeholder={`Add a task for ${mod.code} today...`}
+              style={{
+                flex:1, background:"#0d0d0f", border:"1px solid #2a2a2e",
+                color:"#E0E0DE", padding:"8px 12px", borderRadius:8,
+                fontFamily:"inherit", fontSize:12, outline:"none",
+                width: isMobile ? "100%" : "auto"
+              }}
+            />
+            <button onClick={handleAdd} style={{
+              padding:"8px 16px", borderRadius:8,
+              background: mod.color+"22", color: mod.color,
+              border:`1px solid ${mod.color}44`,
+              fontFamily:"inherit", fontSize:12, fontWeight:600,
+              cursor:"pointer", whiteSpace:"nowrap", flexShrink:0
+            }}>+ Add</button>
+          </div>
+
+          {/* Pending */}
           {pending.map(t => (
-            <div key={t.id} style={{display:"flex", alignItems:"center", gap:10, padding:"9px 12px", background:"#0d0d0f", borderRadius:8, border:"1px solid #1e1e22", group:true}}>
+            <div key={t.id} style={{
+              display:"flex", alignItems:"center", gap:10,
+              padding:"8px 12px", background:"#0d0d0f", borderRadius:8,
+              border:"1px solid #1e1e22", marginBottom:6
+            }}>
               <input type="checkbox" checked={false} onChange={() => onToggle(t.id)}
-                style={{width:15, height:15, accentColor:"#7C6AF7", cursor:"pointer", flexShrink:0}}/>
-              <span style={{flex:1, fontSize:13, color:"#E0E0DE"}}>{t.text}</span>
+                style={{width:15, height:15, accentColor:mod.color, cursor:"pointer", flexShrink:0}}/>
+              <div style={{flex:1, minWidth:0}}>
+                <div style={{fontSize:13, color:"#E0E0DE", overflow:"hidden",
+                  textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{t.text}</div>
+                {!isNew(t) && (
+                  <span style={{fontSize:9, color:"#F7A84A", background:"#F7A84A11",
+                    padding:"1px 5px", borderRadius:4, border:"1px solid #F7A84A22"}}>
+                    carried over
+                  </span>
+                )}
+              </div>
               <button onClick={() => onDelete(t.id)}
-                style={{background:"none", border:"none", color:"#333", fontSize:14, cursor:"pointer", padding:"0 4px", lineHeight:1}}
+                style={{background:"none", border:"none", color:"#333",
+                  fontSize:16, cursor:"pointer", padding:"0 2px", lineHeight:1, flexShrink:0}}
                 onMouseEnter={e => e.currentTarget.style.color="#F76A6A"}
                 onMouseLeave={e => e.currentTarget.style.color="#333"}>×</button>
             </div>
           ))}
-        </div>
-      )}
 
-      {/* Completed tasks (collapsed style) */}
-      {completed.length > 0 && (
-        <div style={{display:"flex", flexDirection:"column", gap:5}}>
-          <div style={{fontSize:10, color:"#444", letterSpacing:.8, marginBottom:4}}>COMPLETED</div>
+          {/* Completed */}
           {completed.map(t => (
-            <div key={t.id} style={{display:"flex", alignItems:"center", gap:10, padding:"7px 12px", borderRadius:8, opacity:0.5}}>
+            <div key={t.id} style={{
+              display:"flex", alignItems:"center", gap:10,
+              padding:"7px 12px", borderRadius:8, opacity:0.45, marginBottom:5
+            }}>
               <input type="checkbox" checked={true} onChange={() => onToggle(t.id)}
                 style={{width:15, height:15, accentColor:"#4ECDC4", cursor:"pointer", flexShrink:0}}/>
-              <span style={{flex:1, fontSize:12, color:"#666", textDecoration:"line-through"}}>{t.text}</span>
+              <span style={{flex:1, fontSize:12, color:"#666",
+                textDecoration:"line-through", overflow:"hidden",
+                textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{t.text}</span>
               <button onClick={() => onDelete(t.id)}
-                style={{background:"none", border:"none", color:"#333", fontSize:14, cursor:"pointer", padding:"0 4px", lineHeight:1}}>×</button>
+                style={{background:"none", border:"none", color:"#333",
+                  fontSize:16, cursor:"pointer", padding:"0 2px", lineHeight:1}}>×</button>
             </div>
           ))}
-        </div>
-      )}
 
-      {todos.length === 0 && (
-        <p style={{color:"#333", fontSize:12, padding:"4px 0"}}>No tasks yet — type one above and press Enter ↵</p>
+          {todos.length === 0 && (
+            <p style={{fontSize:12, color:"#333", paddingTop:4}}>
+              No tasks for {mod.code} today — add one above ↑
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
