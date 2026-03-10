@@ -1,59 +1,37 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { createClient } from "@supabase/supabase-js";
-import { Auth } from "@supabase/auth-ui-react";
-import { ThemeSupa } from "@supabase/auth-ui-shared";
 
-// ─── Supabase config ──────────────────────────────────────────────────────────
-const SB_URL = "https://qtjlnvubejdasgfaeiic.supabase.co";
-const SB_KEY = "sb_publishable_m_H7ZdvVToxSrNz7et8olw_uQ_404H6";
+// ─── Constants ───────────────────────────────────────────────────────────────
+// ─── Supabase config ─────────────────────────────────────────────────────────
+const SB_URL  = "https://qtjlnvubejdasgfaeiic.supabase.co";
+const SB_KEY  = "sb_publishable_m_H7ZdvVToxSrNz7et8olw_uQ_404H6";
+const SB_HEADERS = {
+  "Content-Type": "application/json",
+  "apikey": SB_KEY,
+  "Authorization": `Bearer ${SB_KEY}`,
+  "Prefer": "return=representation",
+};
 
-const supabase = createClient(SB_URL, SB_KEY);
-
-// ─── Data helpers (token-aware) ───────────────────────────────────────────────
-function sbHeaders(token) {
-  return {
-    "Content-Type": "application/json",
-    "apikey": SB_KEY,
-    "Authorization": `Bearer ${token}`,
-    "Prefer": "return=representation",
-  };
-}
-
-async function sbLoad(token, userId) {
+// ─── Supabase helpers ─────────────────────────────────────────────────────────
+async function sbLoad() {
   try {
-    const r = await fetch(
-      `${SB_URL}/rest/v1/acaddesk?user_id=eq.${userId}&select=data`,
-      { headers: sbHeaders(token) }
-    );
+    const r = await fetch(`${SB_URL}/rest/v1/acaddesk?id=eq.main&select=data`, { headers: SB_HEADERS });
     const rows = await r.json();
     if (rows?.[0]?.data?.modules) return rows[0].data;
-  } catch(e) { console.warn("sbLoad failed:", e); }
+  } catch(e) { console.warn("Supabase load failed, using local:", e); }
+  // Fallback to localStorage if offline
   try { const r = localStorage.getItem("acaddesk_cache"); return r ? JSON.parse(r) : null; } catch { return null; }
 }
 
-async function sbSave(data, token, userId) {
+async function sbSave(data) {
+  // Always cache locally for offline resilience
   try { localStorage.setItem("acaddesk_cache", JSON.stringify(data)); } catch {}
-  const hdrs = sbHeaders(token);
   try {
-    const check = await fetch(
-      `${SB_URL}/rest/v1/acaddesk?user_id=eq.${userId}&select=user_id`,
-      { headers: hdrs }
-    );
-    const rows = await check.json();
-    if (rows?.length > 0) {
-      await fetch(`${SB_URL}/rest/v1/acaddesk?user_id=eq.${userId}`, {
-        method: "PATCH",
-        headers: { ...hdrs, "Prefer": "return=minimal" },
-        body: JSON.stringify({ data, updated_at: new Date().toISOString() })
-      });
-    } else {
-      await fetch(`${SB_URL}/rest/v1/acaddesk`, {
-        method: "POST",
-        headers: { ...hdrs, "Prefer": "return=minimal" },
-        body: JSON.stringify({ user_id: userId, data, updated_at: new Date().toISOString() })
-      });
-    }
-  } catch(e) { console.warn("sbSave failed:", e); }
+    await fetch(`${SB_URL}/rest/v1/acaddesk?id=eq.main`, {
+      method: "PATCH",
+      headers: { ...SB_HEADERS, "Prefer": "return=minimal" },
+      body: JSON.stringify({ data, updated_at: new Date().toISOString() })
+    });
+  } catch(e) { console.warn("Supabase save failed:", e); }
 }
 
 const STORAGE_KEY = "up_acaddesk_v3"; // kept for extension compat
@@ -373,112 +351,7 @@ function applyFilters(assignments, filters) {
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
-// ─── Auth Wrapper ─────────────────────────────────────────────────────────────
-function LoginScreen() {
-  return (
-    <div style={{
-      minHeight:"100dvh", background:"#0A0A0C",
-      display:"flex", alignItems:"center", justifyContent:"center", padding:24
-    }}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap');
-        * { box-sizing:border-box; margin:0; padding:0; }
-        body { background:#0A0A0C; }
-      `}</style>
-      <div style={{width:"100%", maxWidth:400}}>
-        {/* Logo */}
-        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:32}}>
-          <div style={{width:38,height:38,borderRadius:11,background:"linear-gradient(135deg,#7C6AF7,#F7A84A)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:"white",fontFamily:"Syne,sans-serif"}}>UP</div>
-          <span style={{fontFamily:"Syne,sans-serif",fontWeight:800,fontSize:22,color:"#E0E0DE"}}>AcadDesk</span>
-        </div>
-        {/* Supabase Auth UI — handles Google OAuth + email magic link */}
-        <Auth
-          supabaseClient={supabase}
-          appearance={{
-            theme: ThemeSupa,
-            variables: {
-              default: {
-                colors: {
-                  brand:           "#7C6AF7",
-                  brandAccent:     "#6a58e5",
-                  inputBackground: "#1a1a1e",
-                  inputText:       "#E0E0DE",
-                  inputBorder:     "#2a2a2e",
-                  inputBorderFocus:"#7C6AF7",
-                  inputPlaceholder:"#555",
-                  messageText:     "#E0E0DE",
-                  anchorTextColor: "#7C6AF7",
-                  defaultButtonBackground: "#1a1a1e",
-                  defaultButtonBackgroundHover: "#2a2a2e",
-                  defaultButtonBorder: "#2a2a2e",
-                  defaultButtonText: "#E0E0DE",
-                },
-                radii: {
-                  borderRadiusButton: "9px",
-                  buttonBorderRadius: "9px",
-                  inputBorderRadius:  "8px",
-                },
-                fonts: {
-                  bodyFontFamily: `"DM Mono", monospace`,
-                  buttonFontFamily: `"Syne", sans-serif`,
-                },
-              }
-            },
-            style: {
-              container: { background:"#131315", border:"1px solid #1e1e22", borderRadius:16, padding:28 },
-              label:     { color:"#888", fontSize:11 },
-              message:   { color:"#F76A6A", fontSize:12 },
-            }
-          }}
-          providers={["google"]}
-          redirectTo={window.location.origin}
-          localization={{ variables: { sign_in: { email_label:"Email", password_label:"Password", button_label:"Sign in", social_provider_text:"Continue with {{provider}}" } } }}
-        />
-        <p style={{textAlign:"center",fontSize:11,color:"#333",marginTop:16,fontFamily:"DM Mono,monospace"}}>
-          AcadDesk · University of Pretoria
-        </p>
-      </div>
-    </div>
-  );
-}
-
-export default function AppRoot() {
-  const [session, setSession] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // Get current session on mount
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoading(false);
-    });
-    // Listen for login / logout
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
-      setSession(session);
-      setLoading(false);
-    });
-    return () => subscription.unsubscribe();
-  }, []);
-
-  if (loading) return (
-    <div style={{minHeight:"100dvh",background:"#0A0A0C",display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{fontFamily:"Syne,sans-serif",color:"#7C6AF7",fontSize:14,fontWeight:700,letterSpacing:2,textAlign:"center"}}>
-        ACADDESK
-        <div style={{width:5,height:5,borderRadius:"50%",background:"#7C6AF7",margin:"14px auto 0",animation:"pulse 1s infinite"}}/>
-      </div>
-      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
-    </div>
-  );
-
-  if (!session) return <LoginScreen />;
-  return <App session={session} />;
-}
-
-function App({ session }) {
-  const token  = session.access_token;
-  const userId = session.user.id;
-  const userName = session.user.user_metadata?.full_name?.split(" ")[0] || null;
-  const userAvatar = session.user.user_metadata?.avatar_url || null;
+export default function App() {
   const [data,    setData]    = useState(loadData);
   const [view,    setView]    = useState("dashboard");
   const [activeM, setActiveM] = useState(null);
@@ -501,7 +374,7 @@ function App({ session }) {
   const isRemote    = useRef(false); // flag to skip save when change came from remote
 
   useEffect(() => {
-    sbLoad(token, userId).then(remote => {
+    sbLoad().then(remote => {
       if (remote?.modules) {
         setData(remote);
         setSyncStatus("live");
@@ -518,7 +391,7 @@ function App({ session }) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      sbSave(data, token, userId).then(() => setSyncStatus("live")).catch(() => setSyncStatus("offline"));
+      sbSave(data).then(() => setSyncStatus("live")).catch(() => setSyncStatus("offline"));
     }, 800);
     return () => clearTimeout(saveTimer.current);
   }, [data]);
@@ -529,8 +402,8 @@ function App({ session }) {
     let interval = setInterval(async () => {
       try {
         const r = await fetch(
-          `${SB_URL}/rest/v1/acaddesk?user_id=eq.${userId}&select=data,updated_at`,
-          { headers: sbHeaders(token) }
+          `${SB_URL}/rest/v1/acaddesk?id=eq.main&select=data,updated_at`,
+          { headers: SB_HEADERS }
         );
         const rows = await r.json();
         const remote = rows?.[0];
@@ -557,7 +430,7 @@ function App({ session }) {
       if (e.key === STORAGE_KEY && e.newValue) {
         try {
           const incoming = JSON.parse(e.newValue);
-          if (incoming?.modules) { setData(incoming); sbSave(incoming, token, userId); }
+          if (incoming?.modules) { setData(incoming); sbSave(incoming); }
         } catch {}
       }
     };
@@ -709,19 +582,10 @@ function App({ session }) {
         {isMobile ? (
   <div/>
         ) : (
-          <div style={{display:"flex",alignItems:"center",gap:4}}>
+          <div style={{display:"flex",gap:2}}>
             {[["dashboard","Dashboard"],["calendar","Timeline"],["grades","Grades"]].map(([v,l])=>(
               <button key={v} onClick={()=>goTo(v)} style={{padding:"6px 13px",borderRadius:8,fontSize:12,fontFamily:"inherit",background:view===v?"#1e1e22":"transparent",color:view===v?"#E0E0DE":"#666",border:"none",cursor:"pointer",transition:"all .15s"}}>{l}</button>
             ))}
-            <div style={{width:1,height:18,background:"#1e1e22",margin:"0 4px"}}/>
-            {userAvatar
-              ? <img src={userAvatar} style={{width:24,height:24,borderRadius:"50%",objectFit:"cover"}} alt=""/>
-              : <div style={{width:24,height:24,borderRadius:"50%",background:"#7C6AF722",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#7C6AF7",fontWeight:700}}>{(session.user.email||"?")[0].toUpperCase()}</div>
-            }
-            <button onClick={()=>supabase.auth.signOut()} title="Sign out"
-              style={{background:"none",border:"none",color:"#444",fontSize:15,cursor:"pointer",padding:"2px 4px",lineHeight:1}}
-              onMouseEnter={e=>e.currentTarget.style.color="#F76A6A"}
-              onMouseLeave={e=>e.currentTarget.style.color="#444"}>⏻</button>
           </div>
         )}
       </div>
@@ -734,7 +598,7 @@ function App({ session }) {
         {view==="dashboard" && !activeM && (<>
           <div style={{marginBottom:22}}>
             <h1 style={{fontFamily:"Syne,sans-serif",fontSize:isMobile?18:22,fontWeight:800,marginBottom:4}}>
-              Good {new Date().getHours()<12?"morning":new Date().getHours()<17?"afternoon":"evening"}{userName ? `, ${userName}` : ""} 👋
+              Good {new Date().getHours()<12?"morning":new Date().getHours()<17?"afternoon":"evening"} 👋
             </h1>
             <p style={{color:"#555",fontSize:12}}>{data.modules.length} modules · {upcomingAll.length} pending tasks</p>
           </div>
