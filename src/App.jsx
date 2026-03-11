@@ -35,28 +35,19 @@ async function sbLoad(token, userId) {
 
 async function sbSave(data, token, userId) {
   try { localStorage.setItem("acaddesk_cache", JSON.stringify(data)); } catch {}
-  const hdrs = sbHdrs(token);
+  if (!userId) return; // no anonymous writes
+  const hdrs = {
+    ...sbHdrs(token),
+    "Prefer": "resolution=merge-duplicates,return=minimal",
+  };
   try {
-    if (userId) {
-      const check = await fetch(`${SB_URL}/rest/v1/acaddesk?user_id=eq.${userId}&select=user_id`, { headers: hdrs });
-      const rows  = await check.json();
-      if (rows?.length > 0) {
-        await fetch(`${SB_URL}/rest/v1/acaddesk?user_id=eq.${userId}`, {
-          method: "PATCH", headers: { ...hdrs, "Prefer": "return=minimal" },
-          body: JSON.stringify({ data, updated_at: new Date().toISOString() })
-        });
-      } else {
-        await fetch(`${SB_URL}/rest/v1/acaddesk`, {
-          method: "POST", headers: { ...hdrs, "Prefer": "return=minimal" },
-          body: JSON.stringify({ user_id: userId, data, updated_at: new Date().toISOString() })
-        });
-      }
-    } else {
-      await fetch(`${SB_URL}/rest/v1/acaddesk?id=eq.main`, {
-        method: "PATCH", headers: { ...hdrs, "Prefer": "return=minimal" },
-        body: JSON.stringify({ data, updated_at: new Date().toISOString() })
-      });
-    }
+    // Single upsert — inserts if no row exists, updates if it does
+    // Requires unique constraint on user_id (Supabase handles via ON CONFLICT)
+    await fetch(`${SB_URL}/rest/v1/acaddesk`, {
+      method: "POST",
+      headers: hdrs,
+      body: JSON.stringify({ user_id: userId, data, updated_at: new Date().toISOString() })
+    });
   } catch(e) { console.warn("sbSave failed:", e); }
 }
 
