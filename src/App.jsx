@@ -449,7 +449,7 @@ function App({ session, initData }) {
       } catch { setSyncStatus("offline"); }
     }, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [token, userId]);   // re-subscribe if session changes (e.g. phone vs laptop)
 
   // Track our own save time so we don't loop
   useEffect(() => { window._lastSave = new Date().toISOString(); }, [data]);
@@ -1252,7 +1252,7 @@ function ModuleTodayTasks({ todos, mod, onAdd, onToggle, onDelete, isMobile, car
 const EBIT_DEGREES = [
   { code:"12130031", name:"BEng Chemical Engineering",            years:4 },
   { code:"12130061", name:"BEng Civil Engineering",               years:4 },
-  { code:"12130071", name:"BEng Computer Engineering",            years:4 },
+  { code:"12130019", name:"BEng Computer Engineering",            years:4 },
   { code:"12130081", name:"BEng Electrical Engineering",          years:4 },
   { code:"12130141", name:"BEng Electronic Engineering",          years:4 },
   { code:"12130151", name:"BEng Industrial Engineering",          years:4 },
@@ -1272,73 +1272,65 @@ const EBIT_DEGREES = [
 
 const MODULE_COLORS_POOL = ["#7C6AF7","#F76A6A","#4ECDC4","#F7A84A","#A8E063","#F76AD3","#6AABF7","#F7D76A"];
 
-// ─── Scrape yearbook for a degree + year ──────────────────────────────────────
+// ─── Scrape yearbook for a degree + year ─────────────────────────────────────
+// UP yearbook HTML has module entries like:
+//   [EBN 111\n\n  Electricity and electronics 111\n\n  Credits: 16.00](#module-01-5)
+// Year anchors: module-01 (yr1), module-02 (yr2), module-03 (yr3),
+//               module-04 (yr4), module-FIN (final year)
+
 async function scrapeYearbookModules(degreeCode, yearNum) {
   const url = `https://www.up.ac.za/yearbooks/2026/EBIT-faculty/UD-programmes/view/${degreeCode}`;
-  try {
-    // Use a CORS proxy since the yearbook doesn't allow direct browser fetch
-    const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-    const r = await fetch(proxy);
-    const json = await r.json();
-    const html = json.contents;
+  const proxies = [
+    `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+    `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  ];
 
-    // Find the year section anchor (#01 = year1, #02 = year2, etc, #fin = final)
-    const yearId = yearNum === "final" ? "fin" : String(yearNum).padStart(2,"0");
-
-    // Extract module codes from that year section
-    // Pattern: module codes like "COS 212", "EBN 111" appear in anchor IDs
-    const yearRegex = new RegExp(`id="module-${yearId}-[^"]*"[\\s\\S]*?(?=id="module-${String(Number(yearId.replace("fin","99"))+1).padStart(2,"0")}-|id="yearbooks-disclaimer"|$)`, "g");
-
-    // Simpler: extract ALL [A-Z]{2,4} [0-9]{3} patterns with their names from the full page
-    // then filter to the correct year section by finding the right heading
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, "text/html");
-
-    // Find year heading
-    const headings = [...doc.querySelectorAll("h3,h4")];
-    const yearLabel = yearNum === "final" ? "Final year" : `Year ${yearNum}`;
-    const yearHeading = headings.find(h => h.textContent.includes(`Curriculum: ${yearLabel}`));
-
-    if (!yearHeading) {
-      // Fallback: just grab all modules from page
-      return extractAllModules(doc);
-    }
-
-    // Get all list items after this heading until the next h3
-    const modules = [];
-    let el = yearHeading.nextElementSibling;
-    while (el && !["H3","H4"].includes(el.tagName)) {
-      const links = [...el.querySelectorAll("a,li,h4")];
-      links.forEach(link => {
-        const text = link.textContent.trim();
-        const match = text.match(/^([A-Z]{2,4}\s?\d{3})\s+(.+?)(?:\s+Credits)?$/);
-        if (match) {
-          modules.push({ code: match[1].replace(/\s/,""), name: match[2].trim() });
-        }
-      });
-      el = el.nextElementSibling;
-    }
-
-    return modules.length > 0 ? modules : extractAllModules(doc);
-  } catch(e) {
-    console.warn("Yearbook scrape failed:", e);
-    return [];
+  let html = null;
+  for (const proxy of proxies) {
+    try {
+      const r = await fetch(proxy, { signal: AbortSignal.timeout(9000) });
+      if (!r.ok) continue;
+      const ct = r.headers.get("content-type") || "";
+      if (ct.includes("json")) {
+        const j = await r.json();
+        html = j?.contents;
+      } else {
+        html = await r.text();
+      }
+      if (html && html.includes("module-")) break;
+      html = null;
+    } catch(e) { continue; }
   }
-}
 
-function extractAllModules(doc) {
-  const modules = [];
+  if (!html) return [];
+
+  // Normalise line endings
+  html = html.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+  // Build anchor prefix for year
+  const anchorMap = { "1":"01", "2":"02", "3":"03", "4":"04", "final":"FIN",
+                       1:"01",   2:"02",   3:"03",   4:"04" };
+  const anchor = anchorMap[yearNum] ?? "01";
+
+  // Match: [XXX 123\n\n  Full name 123\n\n  Credits: N.NN](#module-ANC-N)
+  // We build the pattern as a string to inject the anchor
+  const pat = new RegExp(
+    "\\[([A-Z]{2,4}\\s\\d{3})\\n\\n\\s+(.+?)\\n\\n\\s+Credits:[^\\n]+\\]\\(#module-" + anchor + "-\\d+\\)",
+    "g"
+  );
+
+  const mods = [];
   const seen = new Set();
-  // Module codes appear in heading text like "COS 212\nData Structures..."
-  doc.querySelectorAll("h4,li,strong").forEach(el => {
-    const text = el.textContent.trim();
-    const match = text.match(/^([A-Z]{2,4})\s(\d{3})\s+(.{5,60})$/m);
-    if (match && !seen.has(match[1]+match[2])) {
-      seen.add(match[1]+match[2]);
-      modules.push({ code: match[1]+match[2], name: match[3].trim() });
+  let m;
+  while ((m = pat.exec(html)) !== null) {
+    const code = m[1].replace(/\s/, "");           // "EBN 111" → "EBN111"
+    const name = m[2].trim().replace(/\s+\d{3}$/, ""); // strip trailing "111"
+    if (!seen.has(code) && name.length > 2) {
+      seen.add(code);
+      mods.push({ code, name });
     }
-  });
-  return modules;
+  }
+  return mods;
 }
 
 // ─── Login Screen ──────────────────────────────────────────────────────────────
