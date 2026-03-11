@@ -4,24 +4,15 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 // ─── Supabase config ─────────────────────────────────────────────────────────
 const SB_URL  = "https://qtjlnvubejdasgfaeiic.supabase.co";
 const SB_KEY  = "sb_publishable_m_H7ZdvVToxSrNz7et8olw_uQ_404H6";
-const SB_HEADERS = {
-  "Content-Type": "application/json",
-  "apikey": SB_KEY,
-  "Authorization": `Bearer ${SB_KEY}`,
-  "Prefer": "return=representation",
-};
-
-// Supabase client — lazily created on first use so CDN has time to load
-let _supabaseClient = null;
-function getSupabase() {
-  if (!_supabaseClient) {
-    _supabaseClient = window.supabase.createClient(SB_URL, SB_KEY);
-  }
-  return _supabaseClient;
+// ─── Supabase auth client (lazy — loaded from CDN in index.html) ─────────────
+let _sb = null;
+function sb() {
+  if (!_sb) _sb = window.supabase.createClient(SB_URL, SB_KEY);
+  return _sb;
 }
 
-// ─── Supabase helpers ─────────────────────────────────────────────────────────
-function authHeaders(token) {
+// ─── Data helpers ─────────────────────────────────────────────────────────────
+function sbHdrs(token) {
   return {
     "Content-Type": "application/json",
     "apikey": SB_KEY,
@@ -32,47 +23,41 @@ function authHeaders(token) {
 
 async function sbLoad(token, userId) {
   try {
-    // If logged in, load user-specific row; otherwise fall back to shared 'main' row
     const url = userId
       ? `${SB_URL}/rest/v1/acaddesk?user_id=eq.${userId}&select=data`
       : `${SB_URL}/rest/v1/acaddesk?id=eq.main&select=data`;
-    const r = await fetch(url, { headers: authHeaders(token) });
+    const r = await fetch(url, { headers: sbHdrs(token) });
     const rows = await r.json();
     if (rows?.[0]?.data?.modules) return rows[0].data;
-  } catch(e) { console.warn("Supabase load failed, using local:", e); }
+  } catch(e) { console.warn("sbLoad failed:", e); }
   try { const r = localStorage.getItem("acaddesk_cache"); return r ? JSON.parse(r) : null; } catch { return null; }
 }
 
 async function sbSave(data, token, userId) {
   try { localStorage.setItem("acaddesk_cache", JSON.stringify(data)); } catch {}
-  const hdrs = authHeaders(token);
+  const hdrs = sbHdrs(token);
   try {
     if (userId) {
-      // Upsert user row
       const check = await fetch(`${SB_URL}/rest/v1/acaddesk?user_id=eq.${userId}&select=user_id`, { headers: hdrs });
       const rows  = await check.json();
       if (rows?.length > 0) {
         await fetch(`${SB_URL}/rest/v1/acaddesk?user_id=eq.${userId}`, {
-          method: "PATCH",
-          headers: { ...hdrs, "Prefer": "return=minimal" },
+          method: "PATCH", headers: { ...hdrs, "Prefer": "return=minimal" },
           body: JSON.stringify({ data, updated_at: new Date().toISOString() })
         });
       } else {
         await fetch(`${SB_URL}/rest/v1/acaddesk`, {
-          method: "POST",
-          headers: { ...hdrs, "Prefer": "return=minimal" },
+          method: "POST", headers: { ...hdrs, "Prefer": "return=minimal" },
           body: JSON.stringify({ user_id: userId, data, updated_at: new Date().toISOString() })
         });
       }
     } else {
-      // No auth — save to shared main row (original behaviour)
       await fetch(`${SB_URL}/rest/v1/acaddesk?id=eq.main`, {
-        method: "PATCH",
-        headers: { ...SB_HEADERS, "Prefer": "return=minimal" },
+        method: "PATCH", headers: { ...hdrs, "Prefer": "return=minimal" },
         body: JSON.stringify({ data, updated_at: new Date().toISOString() })
       });
     }
-  } catch(e) { console.warn("Supabase save failed:", e); }
+  } catch(e) { console.warn("sbSave failed:", e); }
 }
 
 const STORAGE_KEY = "up_acaddesk_v3"; // kept for extension compat
@@ -392,133 +377,12 @@ function applyFilters(assignments, filters) {
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
-// ─── Login Screen (magic link only) ──────────────────────────────────────────
-function LoginScreen() {
-  const [email,   setEmail]   = useState("");
-  const [loading, setLoading] = useState(false);
-  const [sent,    setSent]    = useState(false);
-  const [error,   setError]   = useState("");
-
-  const sendLink = async () => {
-    if (!email.trim()) return;
-    setLoading(true);
-    setError("");
-    const { error } = await getSupabase().auth.signInWithOtp({
-      email: email.trim(),
-      options: { emailRedirectTo: window.location.origin }
-    });
-    if (error) { setError(error.message); setLoading(false); }
-    else { setSent(true); setLoading(false); }
-  };
-
-  return (
-    <div style={{minHeight:"100dvh",background:"#0A0A0C",display:"flex",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"DM Mono,monospace"}}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap');*{box-sizing:border-box;margin:0;padding:0;}input:focus{border-color:#7C6AF7!important;outline:none;}`}</style>
-      <div style={{width:"100%",maxWidth:360}}>
-
-        {/* Logo */}
-        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:36}}>
-          <div style={{width:38,height:38,borderRadius:11,background:"linear-gradient(135deg,#7C6AF7,#F7A84A)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:"white",fontFamily:"Syne,sans-serif"}}>UP</div>
-          <span style={{fontFamily:"Syne,sans-serif",fontWeight:800,fontSize:22,color:"#E0E0DE"}}>AcadDesk</span>
-        </div>
-
-        <div style={{background:"#131315",border:"1px solid #1e1e22",borderRadius:16,padding:28}}>
-          {sent ? (
-            /* ── Sent state ── */
-            <div style={{textAlign:"center",padding:"8px 0"}}>
-              <div style={{fontSize:36,marginBottom:16}}>📬</div>
-              <h2 style={{fontFamily:"Syne,sans-serif",fontSize:17,fontWeight:800,color:"#E0E0DE",marginBottom:8}}>Check your email</h2>
-              <p style={{fontSize:12,color:"#555",lineHeight:1.7,marginBottom:20}}>
-                We sent a magic link to<br/>
-                <span style={{color:"#E0E0DE",fontWeight:600}}>{email}</span>
-              </p>
-              <p style={{fontSize:11,color:"#444"}}>Click the link in the email to sign in. You can close this tab.</p>
-              <button onClick={()=>{setSent(false);setEmail("");}} style={{marginTop:20,background:"none",border:"none",color:"#7C6AF7",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
-                ← Use a different email
-              </button>
-            </div>
-          ) : (
-            /* ── Input state ── */
-            <>
-              <h2 style={{fontFamily:"Syne,sans-serif",fontSize:18,fontWeight:800,color:"#E0E0DE",marginBottom:6}}>Sign in</h2>
-              <p style={{fontSize:12,color:"#555",marginBottom:24,lineHeight:1.6}}>Enter your email — we'll send you a magic link, no password needed.</p>
-
-              {error && (
-                <div style={{background:"#F76A6A11",border:"1px solid #F76A6A33",borderRadius:8,padding:"9px 12px",marginBottom:14,fontSize:12,color:"#F76A6A"}}>
-                  {error}
-                </div>
-              )}
-
-              <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                <input
-                  type="email"
-                  placeholder="your@email.com"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && sendLink()}
-                  style={{background:"#0A0A0C",border:"1px solid #2a2a2e",color:"#E0E0DE",padding:"11px 13px",borderRadius:9,fontFamily:"inherit",fontSize:13,width:"100%",transition:"border .15s"}}
-                />
-                <button
-                  onClick={sendLink}
-                  disabled={loading || !email.trim()}
-                  style={{
-                    width:"100%",padding:"11px 14px",borderRadius:9,
-                    background: email.trim() && !loading ? "#7C6AF7" : "#1e1e22",
-                    color:      email.trim() && !loading ? "white"    : "#444",
-                    border:"none",cursor: email.trim() && !loading ? "pointer" : "not-allowed",
-                    fontFamily:"Syne,sans-serif",fontWeight:700,fontSize:13,transition:"all .2s"
-                  }}
-                >
-                  {loading ? "Sending…" : "Send magic link ✦"}
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-        <p style={{textAlign:"center",fontSize:11,color:"#2a2a2e",marginTop:16,fontFamily:"DM Mono,monospace"}}>AcadDesk · University of Pretoria</p>
-      </div>
-    </div>
-  );
-}
-
-// ─── Auth Wrapper ──────────────────────────────────────────────────────────────
-export default function AppRoot() {
-  const [session, setSession] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    getSupabase().auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoading(false);
-    });
-    const { data: { subscription } } = getSupabase().auth.onAuthStateChange((_e, session) => {
-      setSession(session);
-      setLoading(false);
-    });
-    return () => subscription.unsubscribe();
-  }, []);
-
-  if (loading) return (
-    <div style={{minHeight:"100dvh",background:"#0A0A0C",display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{fontFamily:"Syne,sans-serif",color:"#7C6AF7",fontSize:14,fontWeight:700,letterSpacing:2,textAlign:"center"}}>
-        ACADDESK
-        <div style={{width:5,height:5,borderRadius:"50%",background:"#7C6AF7",margin:"14px auto 0",animation:"pulse 1s infinite"}}/>
-      </div>
-      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
-    </div>
-  );
-
-  if (!session) return <LoginScreen />;
-  return <App session={session} />;
-}
-
-function App({ session }) {
+function App({ session, initData }) {
   const token    = session?.access_token || null;
   const userId   = session?.user?.id     || null;
-  const userName = session?.user?.user_metadata?.full_name?.split(" ")[0] || null;
+  const userName = session?.user?.user_metadata?.full_name?.split(" ")[0] || session?.user?.email?.split("@")[0] || null;
   const userAvatar = session?.user?.user_metadata?.avatar_url || null;
-
-  const [data,    setData]    = useState(loadData);
+  const [data,    setData]    = useState(() => initData || loadData());
   const [view,    setView]    = useState("dashboard");
   const [activeM, setActiveM] = useState(null);
   const [modal,   setModal]   = useState(null);
@@ -569,7 +433,7 @@ function App({ session }) {
       try {
         const r = await fetch(
           userId ? `${SB_URL}/rest/v1/acaddesk?user_id=eq.${userId}&select=data,updated_at` : `${SB_URL}/rest/v1/acaddesk?id=eq.main&select=data,updated_at`,
-          { headers: authHeaders(token) }
+          { headers: sbHdrs(token) }
         );
         const rows = await r.json();
         const remote = rows?.[0];
@@ -752,15 +616,9 @@ function App({ session }) {
             {[["dashboard","Dashboard"],["calendar","Timeline"],["grades","Grades"]].map(([v,l])=>(
               <button key={v} onClick={()=>goTo(v)} style={{padding:"6px 13px",borderRadius:8,fontSize:12,fontFamily:"inherit",background:view===v?"#1e1e22":"transparent",color:view===v?"#E0E0DE":"#666",border:"none",cursor:"pointer",transition:"all .15s"}}>{l}</button>
             ))}
-            <div style={{width:1,height:18,background:"#1e1e22",margin:"0 6px"}}/>
-            {userAvatar
-              ? <img src={userAvatar} style={{width:24,height:24,borderRadius:"50%",objectFit:"cover"}} alt=""/>
-              : <div style={{width:24,height:24,borderRadius:"50%",background:"#7C6AF722",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#7C6AF7",fontWeight:700}}>{(session?.user?.email||"A")[0].toUpperCase()}</div>
-            }
-            <button onClick={()=>getSupabase().auth.signOut()} title="Sign out"
-              style={{background:"none",border:"none",color:"#444",fontSize:15,cursor:"pointer",padding:"2px 6px",lineHeight:1}}
-              onMouseEnter={e=>e.currentTarget.style.color="#F76A6A"}
-              onMouseLeave={e=>e.currentTarget.style.color="#444"}>⏻</button>
+            <div style={{width:1,height:16,background:"#1e1e22",margin:"0 4px"}}/>
+            {userAvatar ? <img src={userAvatar} style={{width:24,height:24,borderRadius:"50%",objectFit:"cover"}} alt=""/> : null}
+            <button onClick={()=>sb().auth.signOut()} title="Sign out" style={{background:"none",border:"none",color:"#444",fontSize:15,cursor:"pointer",padding:"2px 6px",lineHeight:1}} onMouseEnter={e=>e.currentTarget.style.color="#F76A6A"} onMouseLeave={e=>e.currentTarget.style.color="#444"}>⏻</button>
           </div>
         )}
       </div>
@@ -1385,4 +1243,466 @@ function ModuleTodayTasks({ todos, mod, onAdd, onToggle, onDelete, isMobile, car
       )}
     </div>
   );
+}
+// ═══════════════════════════════════════════════════════════════════════════════
+// AUTH + ONBOARDING SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── EBIT Degrees (programme codes from UP yearbook) ──────────────────────────
+const EBIT_DEGREES = [
+  { code:"12130031", name:"BEng Chemical Engineering",            years:4 },
+  { code:"12130061", name:"BEng Civil Engineering",               years:4 },
+  { code:"12130071", name:"BEng Computer Engineering",            years:4 },
+  { code:"12130081", name:"BEng Electrical Engineering",          years:4 },
+  { code:"12130141", name:"BEng Electronic Engineering",          years:4 },
+  { code:"12130151", name:"BEng Industrial Engineering",          years:4 },
+  { code:"12130181", name:"BEng Mechanical Engineering",          years:4 },
+  { code:"12130191", name:"BEng Mechatronic Engineering",         years:4 },
+  { code:"12130201", name:"BEng Mining Engineering",              years:4 },
+  { code:"12130221", name:"BEng Metallurgical Engineering",       years:4 },
+  { code:"12136012", name:"BEng Chemical Engineering (5-year)",   years:5 },
+  { code:"12136014", name:"BEng Civil Engineering (5-year)",      years:5 },
+  { code:"12133081", name:"BSc Computer Science",                 years:3 },
+  { code:"12133091", name:"BSc Information Technology",           years:3 },
+  { code:"12133071", name:"BSc Construction Management",          years:3 },
+  { code:"12133051", name:"BSc Architecture",                     years:4 },
+  { code:"12133061", name:"BSc Quantity Surveying",               years:3 },
+  { code:"12133111", name:"BSc Urban and Regional Planning",      years:4 },
+];
+
+const MODULE_COLORS_POOL = ["#7C6AF7","#F76A6A","#4ECDC4","#F7A84A","#A8E063","#F76AD3","#6AABF7","#F7D76A"];
+
+// ─── Scrape yearbook for a degree + year ──────────────────────────────────────
+async function scrapeYearbookModules(degreeCode, yearNum) {
+  const url = `https://www.up.ac.za/yearbooks/2026/EBIT-faculty/UD-programmes/view/${degreeCode}`;
+  try {
+    // Use a CORS proxy since the yearbook doesn't allow direct browser fetch
+    const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+    const r = await fetch(proxy);
+    const json = await r.json();
+    const html = json.contents;
+
+    // Find the year section anchor (#01 = year1, #02 = year2, etc, #fin = final)
+    const yearId = yearNum === "final" ? "fin" : String(yearNum).padStart(2,"0");
+
+    // Extract module codes from that year section
+    // Pattern: module codes like "COS 212", "EBN 111" appear in anchor IDs
+    const yearRegex = new RegExp(`id="module-${yearId}-[^"]*"[\\s\\S]*?(?=id="module-${String(Number(yearId.replace("fin","99"))+1).padStart(2,"0")}-|id="yearbooks-disclaimer"|$)`, "g");
+
+    // Simpler: extract ALL [A-Z]{2,4} [0-9]{3} patterns with their names from the full page
+    // then filter to the correct year section by finding the right heading
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+
+    // Find year heading
+    const headings = [...doc.querySelectorAll("h3,h4")];
+    const yearLabel = yearNum === "final" ? "Final year" : `Year ${yearNum}`;
+    const yearHeading = headings.find(h => h.textContent.includes(`Curriculum: ${yearLabel}`));
+
+    if (!yearHeading) {
+      // Fallback: just grab all modules from page
+      return extractAllModules(doc);
+    }
+
+    // Get all list items after this heading until the next h3
+    const modules = [];
+    let el = yearHeading.nextElementSibling;
+    while (el && !["H3","H4"].includes(el.tagName)) {
+      const links = [...el.querySelectorAll("a,li,h4")];
+      links.forEach(link => {
+        const text = link.textContent.trim();
+        const match = text.match(/^([A-Z]{2,4}\s?\d{3})\s+(.+?)(?:\s+Credits)?$/);
+        if (match) {
+          modules.push({ code: match[1].replace(/\s/,""), name: match[2].trim() });
+        }
+      });
+      el = el.nextElementSibling;
+    }
+
+    return modules.length > 0 ? modules : extractAllModules(doc);
+  } catch(e) {
+    console.warn("Yearbook scrape failed:", e);
+    return [];
+  }
+}
+
+function extractAllModules(doc) {
+  const modules = [];
+  const seen = new Set();
+  // Module codes appear in heading text like "COS 212\nData Structures..."
+  doc.querySelectorAll("h4,li,strong").forEach(el => {
+    const text = el.textContent.trim();
+    const match = text.match(/^([A-Z]{2,4})\s(\d{3})\s+(.{5,60})$/m);
+    if (match && !seen.has(match[1]+match[2])) {
+      seen.add(match[1]+match[2]);
+      modules.push({ code: match[1]+match[2], name: match[3].trim() });
+    }
+  });
+  return modules;
+}
+
+// ─── Login Screen ──────────────────────────────────────────────────────────────
+function LoginScreen({ onSwitchToSignup }) {
+  const [email,    setEmail]    = useState("");
+  const [password, setPassword] = useState("");
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState("");
+
+  const signIn = async () => {
+    if (!email.trim() || !password) return;
+    setLoading(true); setError("");
+    const { error } = await sb().auth.signInWithPassword({ email: email.trim(), password });
+    if (error) { setError(error.message); setLoading(false); }
+    // on success onAuthStateChange fires automatically
+  };
+
+  const inp = { background:"#0A0A0C", border:"1px solid #2a2a2e", color:"#E0E0DE",
+    padding:"11px 13px", borderRadius:9, fontFamily:"inherit", fontSize:13,
+    width:"100%", outline:"none", transition:"border .15s" };
+
+  return (
+    <div style={{background:"#131315",border:"1px solid #1e1e22",borderRadius:16,padding:28}}>
+      <h2 style={{fontFamily:"Syne,sans-serif",fontSize:18,fontWeight:800,color:"#E0E0DE",marginBottom:6}}>Sign in</h2>
+      <p style={{fontSize:12,color:"#555",marginBottom:24}}>Welcome back</p>
+      {error && <div style={{background:"#F76A6A11",border:"1px solid #F76A6A33",borderRadius:8,padding:"9px 12px",marginBottom:14,fontSize:12,color:"#F76A6A"}}>{error}</div>}
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        <input style={inp} type="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&signIn()}/>
+        <input style={inp} type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&signIn()}/>
+        <button onClick={signIn} disabled={loading||!email.trim()||!password} style={{
+          width:"100%",padding:"11px 14px",borderRadius:9,
+          background:email.trim()&&password&&!loading?"#7C6AF7":"#1e1e22",
+          color:email.trim()&&password&&!loading?"white":"#444",
+          border:"none",cursor:email.trim()&&password&&!loading?"pointer":"not-allowed",
+          fontFamily:"Syne,sans-serif",fontWeight:700,fontSize:13,transition:"all .2s"
+        }}>{loading?"Signing in…":"Sign in →"}</button>
+      </div>
+      <p style={{textAlign:"center",fontSize:12,color:"#555",marginTop:18}}>
+        No account?{" "}
+        <button onClick={onSwitchToSignup} style={{background:"none",border:"none",color:"#7C6AF7",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>
+          Create one →
+        </button>
+      </p>
+    </div>
+  );
+}
+
+// ─── Sign Up Screen ────────────────────────────────────────────────────────────
+function SignupScreen({ onSwitchToLogin }) {
+  const [email,    setEmail]    = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm,  setConfirm]  = useState("");
+  const [loading,  setLoading]  = useState(false);
+  const [sent,     setSent]     = useState(false);
+  const [error,    setError]    = useState("");
+
+  const signUp = async () => {
+    if (!email.trim() || !password) return;
+    if (password !== confirm) { setError("Passwords don't match"); return; }
+    if (password.length < 6)  { setError("Password must be at least 6 characters"); return; }
+    setLoading(true); setError("");
+    const { error } = await sb().auth.signUp({
+      email: email.trim(), password,
+      options: { emailRedirectTo: window.location.origin }
+    });
+    if (error) { setError(error.message); setLoading(false); }
+    else { setSent(true); setLoading(false); }
+  };
+
+  const inp = { background:"#0A0A0C", border:"1px solid #2a2a2e", color:"#E0E0DE",
+    padding:"11px 13px", borderRadius:9, fontFamily:"inherit", fontSize:13,
+    width:"100%", outline:"none", transition:"border .15s" };
+
+  if (sent) return (
+    <div style={{background:"#131315",border:"1px solid #1e1e22",borderRadius:16,padding:28,textAlign:"center"}}>
+      <div style={{fontSize:40,marginBottom:16}}>📬</div>
+      <h2 style={{fontFamily:"Syne,sans-serif",fontSize:17,fontWeight:800,color:"#E0E0DE",marginBottom:8}}>Confirm your email</h2>
+      <p style={{fontSize:12,color:"#555",lineHeight:1.8,marginBottom:16}}>
+        We sent a confirmation link to<br/>
+        <strong style={{color:"#E0E0DE"}}>{email}</strong>
+      </p>
+      <p style={{fontSize:11,color:"#444"}}>Click the link in the email, then come back and sign in.</p>
+      <button onClick={onSwitchToLogin} style={{marginTop:20,background:"none",border:"none",color:"#7C6AF7",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:600}}>
+        ← Back to sign in
+      </button>
+    </div>
+  );
+
+  return (
+    <div style={{background:"#131315",border:"1px solid #1e1e22",borderRadius:16,padding:28}}>
+      <h2 style={{fontFamily:"Syne,sans-serif",fontSize:18,fontWeight:800,color:"#E0E0DE",marginBottom:6}}>Create account</h2>
+      <p style={{fontSize:12,color:"#555",marginBottom:24}}>Set up your AcadDesk</p>
+      {error && <div style={{background:"#F76A6A11",border:"1px solid #F76A6A33",borderRadius:8,padding:"9px 12px",marginBottom:14,fontSize:12,color:"#F76A6A"}}>{error}</div>}
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        <input style={inp} type="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)}/>
+        <input style={inp} type="password" placeholder="Password (min 6 chars)" value={password} onChange={e=>setPassword(e.target.value)}/>
+        <input style={inp} type="password" placeholder="Confirm password" value={confirm} onChange={e=>setConfirm(e.target.value)} onKeyDown={e=>e.key==="Enter"&&signUp()}/>
+        <button onClick={signUp} disabled={loading||!email.trim()||!password||!confirm} style={{
+          width:"100%",padding:"11px 14px",borderRadius:9,
+          background:email.trim()&&password&&confirm&&!loading?"#7C6AF7":"#1e1e22",
+          color:email.trim()&&password&&confirm&&!loading?"white":"#444",
+          border:"none",cursor:email.trim()&&password&&confirm&&!loading?"pointer":"not-allowed",
+          fontFamily:"Syne,sans-serif",fontWeight:700,fontSize:13,transition:"all .2s"
+        }}>{loading?"Creating account…":"Create account →"}</button>
+      </div>
+      <p style={{textAlign:"center",fontSize:12,color:"#555",marginTop:18}}>
+        Already have an account?{" "}
+        <button onClick={onSwitchToLogin} style={{background:"none",border:"none",color:"#7C6AF7",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>
+          Sign in →
+        </button>
+      </p>
+    </div>
+  );
+}
+
+// ─── Onboarding (new users — pick degree + year) ───────────────────────────────
+function OnboardingScreen({ session, onComplete }) {
+  const [step,      setStep]     = useState(1); // 1=degree, 2=year, 3=scraping, 4=confirm
+  const [degree,    setDegree]   = useState(null);
+  const [year,      setYear]     = useState(null);
+  const [modules,   setModules]  = useState([]);
+  const [selected,  setSelected] = useState({});
+  const [loading,   setLoading]  = useState(false);
+  const [error,     setError]    = useState("");
+  const [search,    setSearch]   = useState("");
+
+  const filtered = EBIT_DEGREES.filter(d =>
+    d.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const scrape = async () => {
+    setStep(3); setLoading(true); setError("");
+    const mods = await scrapeYearbookModules(degree.code, year);
+    if (mods.length === 0) {
+      setError("Couldn't load modules from UP Yearbook. You can add them manually after setup.");
+      // Still proceed with empty list
+      setModules([]);
+      const sel = {};
+      setSelected(sel);
+    } else {
+      setModules(mods);
+      const sel = {};
+      mods.forEach(m => { sel[m.code] = true; }); // select all by default
+      setSelected(sel);
+    }
+    setLoading(false);
+    setStep(4);
+  };
+
+  const finish = async () => {
+    setLoading(true);
+    const chosenMods = modules.filter(m => selected[m.code]);
+    const newModules = chosenMods.map((m, i) => ({
+      id: "m" + Date.now() + i,
+      code: m.code,
+      name: m.name,
+      color: MODULE_COLORS_POOL[i % MODULE_COLORS_POOL.length],
+      passMark: 50,
+      assignments: [],
+    }));
+
+    const newData = { ...DEFAULT_DATA, modules: newModules };
+    const token  = session.access_token;
+    const userId = session.user.id;
+    await sbSave(newData, token, userId);
+
+    // Mark onboarding done in Supabase user metadata
+    await sb().auth.updateUser({ data: { onboarded: true, degree: degree.name, year } });
+    onComplete(newData);
+  };
+
+  const card = { background:"#131315", border:"1px solid #1e1e22", borderRadius:16, padding:28 };
+
+  // Step 1 — pick degree
+  if (step === 1) return (
+    <div style={card}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:20}}>
+        <div style={{width:22,height:22,borderRadius:"50%",background:"#7C6AF7",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"white",fontWeight:700,flexShrink:0}}>1</div>
+        <h2 style={{fontFamily:"Syne,sans-serif",fontSize:17,fontWeight:800,color:"#E0E0DE"}}>What are you studying?</h2>
+      </div>
+      <input
+        placeholder="Search degrees..."
+        value={search} onChange={e=>setSearch(e.target.value)}
+        style={{background:"#0A0A0C",border:"1px solid #2a2a2e",color:"#E0E0DE",padding:"9px 12px",borderRadius:8,fontFamily:"inherit",fontSize:12,width:"100%",outline:"none",marginBottom:12}}
+      />
+      <div style={{maxHeight:300,overflowY:"auto",display:"flex",flexDirection:"column",gap:6}}>
+        {filtered.map(d => (
+          <button key={d.code} onClick={()=>{setDegree(d);setStep(2);}} style={{
+            padding:"11px 14px",borderRadius:9,textAlign:"left",
+            background:degree?.code===d.code?"#7C6AF722":"#0A0A0C",
+            border:`1px solid ${degree?.code===d.code?"#7C6AF7":"#2a2a2e"}`,
+            color:"#E0E0DE",cursor:"pointer",fontFamily:"inherit",fontSize:12,
+            transition:"all .15s"
+          }}>
+            <div style={{fontWeight:600}}>{d.name}</div>
+            <div style={{fontSize:10,color:"#555",marginTop:2}}>{d.years}-year programme · EBIT</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  // Step 2 — pick year
+  if (step === 2) return (
+    <div style={card}>
+      <button onClick={()=>setStep(1)} style={{background:"none",border:"none",color:"#555",cursor:"pointer",fontFamily:"inherit",fontSize:12,marginBottom:16,padding:0}}>← Back</button>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:20}}>
+        <div style={{width:22,height:22,borderRadius:"50%",background:"#7C6AF7",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"white",fontWeight:700,flexShrink:0}}>2</div>
+        <h2 style={{fontFamily:"Syne,sans-serif",fontSize:17,fontWeight:800,color:"#E0E0DE"}}>Which year are you in?</h2>
+      </div>
+      <p style={{fontSize:11,color:"#555",marginBottom:16}}>{degree.name}</p>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {Array.from({length: degree.years}, (_,i) => i+1).map(y => {
+          const label = y === degree.years ? `Year ${y} (Final year)` : `Year ${y}`;
+          const yearVal = y === degree.years ? "final" : y;
+          return (
+            <button key={y} onClick={()=>{setYear(yearVal);scrape();}} style={{
+              padding:"13px 16px",borderRadius:9,textAlign:"left",
+              background:"#0A0A0C",border:"1px solid #2a2a2e",
+              color:"#E0E0DE",cursor:"pointer",fontFamily:"Syne,sans-serif",fontWeight:600,fontSize:13,
+              transition:"all .15s"
+            }}>
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  // Step 3 — scraping
+  if (step === 3) return (
+    <div style={{...card,textAlign:"center",padding:"40px 28px"}}>
+      <div style={{fontSize:32,marginBottom:16}}>📚</div>
+      <h2 style={{fontFamily:"Syne,sans-serif",fontSize:17,fontWeight:800,color:"#E0E0DE",marginBottom:8}}>Fetching your modules</h2>
+      <p style={{fontSize:12,color:"#555",marginBottom:20}}>Checking the UP Yearbook for {degree.name}…</p>
+      <div style={{display:"flex",justifyContent:"center",gap:6}}>
+        {[0,1,2].map(i=>(
+          <div key={i} style={{width:6,height:6,borderRadius:"50%",background:"#7C6AF7",animation:`pulse 1.2s ${i*0.2}s infinite`}}/>
+        ))}
+      </div>
+      <style>{`@keyframes pulse{0%,100%{opacity:.2}50%{opacity:1}}`}</style>
+    </div>
+  );
+
+  // Step 4 — confirm modules
+  if (step === 4) return (
+    <div style={card}>
+      <button onClick={()=>setStep(2)} style={{background:"none",border:"none",color:"#555",cursor:"pointer",fontFamily:"inherit",fontSize:12,marginBottom:16,padding:0}}>← Back</button>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+        <div style={{width:22,height:22,borderRadius:"50%",background:"#7C6AF7",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"white",fontWeight:700,flexShrink:0}}>3</div>
+        <h2 style={{fontFamily:"Syne,sans-serif",fontSize:17,fontWeight:800,color:"#E0E0DE"}}>Confirm your modules</h2>
+      </div>
+      <p style={{fontSize:11,color:"#555",marginBottom:16}}>
+        {modules.length > 0
+          ? `Found ${modules.length} modules for ${degree.name} Year ${year}. Deselect any you're not taking.`
+          : `Couldn't fetch modules automatically. You can add them manually after setup.`
+        }
+      </p>
+      {error && <div style={{background:"#F7A84A11",border:"1px solid #F7A84A33",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:11,color:"#F7A84A"}}>{error}</div>}
+      {modules.length > 0 && (
+        <div style={{maxHeight:280,overflowY:"auto",display:"flex",flexDirection:"column",gap:6,marginBottom:16}}>
+          {modules.map((m,i) => (
+            <label key={m.code} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:8,background:"#0A0A0C",border:`1px solid ${selected[m.code]?"#7C6AF744":"#1e1e22"}`,cursor:"pointer",transition:"border .15s"}}>
+              <input type="checkbox" checked={!!selected[m.code]} onChange={()=>setSelected(p=>({...p,[m.code]:!p[m.code]}))} style={{accentColor:MODULE_COLORS_POOL[i%MODULE_COLORS_POOL.length],width:14,height:14,flexShrink:0}}/>
+              <div>
+                <div style={{fontSize:12,fontWeight:600,color:MODULE_COLORS_POOL[i%MODULE_COLORS_POOL.length]}}>{m.code}</div>
+                <div style={{fontSize:11,color:"#888"}}>{m.name}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+      )}
+      <button onClick={finish} disabled={loading} style={{
+        width:"100%",padding:"12px 14px",borderRadius:9,
+        background:loading?"#1e1e22":"#7C6AF7",color:loading?"#444":"white",
+        border:"none",cursor:loading?"not-allowed":"pointer",
+        fontFamily:"Syne,sans-serif",fontWeight:700,fontSize:13
+      }}>
+        {loading ? "Setting up…" : `Set up dashboard →`}
+      </button>
+    </div>
+  );
+}
+
+// ─── Auth Page (login/signup) ─────────────────────────────────────────────────
+function AuthPage() {
+  const [mode, setMode] = useState("login"); // "login" | "signup"
+  return (
+    <div style={{minHeight:"100dvh",background:"#0A0A0C",display:"flex",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"DM Mono,monospace"}}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap');*{box-sizing:border-box;margin:0;padding:0;}input:focus{border-color:#7C6AF7!important;}`}</style>
+      <div style={{width:"100%",maxWidth:380}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:32}}>
+          <div style={{width:38,height:38,borderRadius:11,background:"linear-gradient(135deg,#7C6AF7,#F7A84A)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:"white",fontFamily:"Syne,sans-serif"}}>UP</div>
+          <span style={{fontFamily:"Syne,sans-serif",fontWeight:800,fontSize:22,color:"#E0E0DE"}}>AcadDesk</span>
+        </div>
+        {mode === "login"
+          ? <LoginScreen  onSwitchToSignup={()=>setMode("signup")} />
+          : <SignupScreen onSwitchToLogin={()=>setMode("login")}  />
+        }
+        <p style={{textAlign:"center",fontSize:11,color:"#2a2a2e",marginTop:16}}>AcadDesk · University of Pretoria</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── App Root ─────────────────────────────────────────────────────────────────
+export default function AppRoot() {
+  const [session,    setSession]    = useState(null);
+  const [loading,    setLoading]    = useState(true);
+  const [onboarded,  setOnboarded]  = useState(false);
+  const [initData,   setInitData]   = useState(null);
+
+  useEffect(() => {
+    sb().auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) {
+        const meta = session.user?.user_metadata;
+        setOnboarded(!!meta?.onboarded);
+      }
+      setLoading(false);
+    });
+
+    const { data: { subscription } } = sb().auth.onAuthStateChange((_e, session) => {
+      setSession(session);
+      if (session) {
+        const meta = session.user?.user_metadata;
+        setOnboarded(!!meta?.onboarded);
+      } else {
+        setOnboarded(false);
+      }
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  if (loading) return (
+    <div style={{minHeight:"100dvh",background:"#0A0A0C",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{fontFamily:"Syne,sans-serif",color:"#7C6AF7",fontSize:14,fontWeight:700,letterSpacing:2,textAlign:"center"}}>
+        ACADDESK
+        <div style={{width:5,height:5,borderRadius:"50%",background:"#7C6AF7",margin:"14px auto 0",animation:"pulse2 1s infinite"}}/>
+      </div>
+      <style>{`@keyframes pulse2{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
+    </div>
+  );
+
+  if (!session) return <AuthPage />;
+
+  if (!onboarded) return (
+    <div style={{minHeight:"100dvh",background:"#0A0A0C",display:"flex",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"DM Mono,monospace"}}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap');*{box-sizing:border-box;margin:0;padding:0;}input:focus{border-color:#7C6AF7!important;}button:active{opacity:.8;}`}</style>
+      <div style={{width:"100%",maxWidth:440}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:28}}>
+          <div style={{width:38,height:38,borderRadius:11,background:"linear-gradient(135deg,#7C6AF7,#F7A84A)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:"white",fontFamily:"Syne,sans-serif"}}>UP</div>
+          <span style={{fontFamily:"Syne,sans-serif",fontWeight:800,fontSize:22,color:"#E0E0DE"}}>AcadDesk</span>
+        </div>
+        <OnboardingScreen
+          session={session}
+          onComplete={(data) => { setInitData(data); setOnboarded(true); }}
+        />
+      </div>
+    </div>
+  );
+
+  return <App session={session} initData={initData} />;
 }
