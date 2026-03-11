@@ -11,9 +11,14 @@ const SB_HEADERS = {
   "Prefer": "return=representation",
 };
 
-// Supabase client — loaded from CDN in index.html (window.supabase)
-// Used only for auth — data still uses direct fetch calls above
-const _supabase = window.supabase.createClient(SB_URL, SB_KEY);
+// Supabase client — lazily created on first use so CDN has time to load
+let _supabaseClient = null;
+function getSupabase() {
+  if (!_supabaseClient) {
+    _supabaseClient = window.supabase.createClient(SB_URL, SB_KEY);
+  }
+  return _supabaseClient;
+}
 
 // ─── Supabase helpers ─────────────────────────────────────────────────────────
 function authHeaders(token) {
@@ -396,7 +401,7 @@ function LoginScreen() {
 
   const googleLogin = async () => {
     setLoading(true);
-    const { error } = await _supabase.auth.signInWithOAuth({
+    const { error } = await getSupabase().auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: window.location.origin }
     });
@@ -406,7 +411,7 @@ function LoginScreen() {
   const magicLink = async () => {
     if (!email.trim()) return;
     setLoading(true);
-    const { error } = await _supabase.auth.signInWithOtp({
+    const { error } = await getSupabase().auth.signInWithOtp({
       email: email.trim(),
       options: { emailRedirectTo: window.location.origin }
     });
@@ -495,11 +500,11 @@ export default function AppRoot() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    _supabase.auth.getSession().then(({ data: { session } }) => {
+    getSupabase().auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setLoading(false);
     });
-    const { data: { subscription } } = _supabase.auth.onAuthStateChange((_e, session) => {
+    const { data: { subscription } } = getSupabase().auth.onAuthStateChange((_e, session) => {
       setSession(session);
       setLoading(false);
     });
@@ -765,7 +770,7 @@ function App({ session }) {
               ? <img src={userAvatar} style={{width:24,height:24,borderRadius:"50%",objectFit:"cover"}} alt=""/>
               : <div style={{width:24,height:24,borderRadius:"50%",background:"#7C6AF722",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#7C6AF7",fontWeight:700}}>{(session?.user?.email||"A")[0].toUpperCase()}</div>
             }
-            <button onClick={()=>_supabase.auth.signOut()} title="Sign out"
+            <button onClick={()=>getSupabase().auth.signOut()} title="Sign out"
               style={{background:"none",border:"none",color:"#444",fontSize:15,cursor:"pointer",padding:"2px 6px",lineHeight:1}}
               onMouseEnter={e=>e.currentTarget.style.color="#F76A6A"}
               onMouseLeave={e=>e.currentTarget.style.color="#444"}>⏻</button>
