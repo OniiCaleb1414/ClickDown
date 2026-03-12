@@ -30,11 +30,11 @@ async function sbLoad(token, userId) {
     const rows = await r.json();
     if (rows?.[0]?.data?.modules) return rows[0].data;
   } catch(e) { console.warn("sbLoad failed:", e); }
-  try { const r = localStorage.getItem("acaddesk_cache"); return r ? JSON.parse(r) : null; } catch { return null; }
+  try { const k = userId ? `acaddesk_cache_${userId}` : "acaddesk_cache"; const r = localStorage.getItem(k); return r ? JSON.parse(r) : null; } catch { return null; }
 }
 
 async function sbSave(data, token, userId) {
-  try { localStorage.setItem("acaddesk_cache", JSON.stringify(data)); } catch {}
+  try { if (userId) localStorage.setItem(`acaddesk_cache_${userId}`, JSON.stringify(data)); } catch {}
   if (!userId) return; // no anonymous writes
   const hdrs = {
     ...sbHdrs(token),
@@ -171,7 +171,7 @@ const DEFAULT_DATA = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 // loadData — sync fallback only (actual load happens async in useEffect)
-const loadData  = () => { try { const r = localStorage.getItem("acaddesk_cache"); return r ? JSON.parse(r) : DEFAULT_DATA; } catch { return DEFAULT_DATA; } };
+const loadData  = (uid) => { try { if (!uid) return DEFAULT_DATA; const r = localStorage.getItem(`acaddesk_cache_${uid}`); return r ? JSON.parse(r) : DEFAULT_DATA; } catch { return DEFAULT_DATA; } };
 const saveData  = d  => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {} }; // kept for extension
 const daysUntil = ds => Math.ceil((new Date(ds) - new Date()) / 86400000);
 const urgColor  = d  => d < 0 ? "#666" : d <= 3 ? "#F76A6A" : d <= 7 ? "#F7C56A" : "#4ECDC4";
@@ -373,7 +373,7 @@ function App({ session, initData }) {
   const userId   = session?.user?.id     || null;
   const userName = session?.user?.user_metadata?.full_name?.split(" ")[0] || session?.user?.email?.split("@")[0] || null;
   const userAvatar = session?.user?.user_metadata?.avatar_url || null;
-  const [data,    setData]    = useState(() => initData || loadData());
+  const [data,    setData]    = useState(() => initData || loadData(userId));
   const [view,    setView]    = useState("dashboard");
   const [activeM, setActiveM] = useState(null);
   const [modal,   setModal]   = useState(null);
@@ -396,6 +396,7 @@ function App({ session, initData }) {
 
   useEffect(() => {
     sbLoad(token, userId).then(remote => {
+      remoteLoaded.current = true;
       if (remote?.modules) {
         setData(remote);
         setSyncStatus("live");
@@ -1239,90 +1240,228 @@ function ModuleTodayTasks({ todos, mod, onAdd, onToggle, onDelete, isMobile, car
 // AUTH + ONBOARDING SYSTEM
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ─── EBIT Degrees (programme codes from UP yearbook) ──────────────────────────
-const EBIT_DEGREES = [
-  { code:"12130031", name:"BEng Chemical Engineering",            years:4 },
-  { code:"12130061", name:"BEng Civil Engineering",               years:4 },
-  { code:"12130019", name:"BEng Computer Engineering",            years:4 },
-  { code:"12130081", name:"BEng Electrical Engineering",          years:4 },
-  { code:"12130141", name:"BEng Electronic Engineering",          years:4 },
-  { code:"12130151", name:"BEng Industrial Engineering",          years:4 },
-  { code:"12130181", name:"BEng Mechanical Engineering",          years:4 },
-  { code:"12130191", name:"BEng Mechatronic Engineering",         years:4 },
-  { code:"12130201", name:"BEng Mining Engineering",              years:4 },
-  { code:"12130221", name:"BEng Metallurgical Engineering",       years:4 },
-  { code:"12136012", name:"BEng Chemical Engineering (5-year)",   years:5 },
-  { code:"12136014", name:"BEng Civil Engineering (5-year)",      years:5 },
-  { code:"12133081", name:"BSc Computer Science",                 years:3 },
-  { code:"12133091", name:"BSc Information Technology",           years:3 },
-  { code:"12133071", name:"BSc Construction Management",          years:3 },
-  { code:"12133051", name:"BSc Architecture",                     years:4 },
-  { code:"12133061", name:"BSc Quantity Surveying",               years:3 },
-  { code:"12133111", name:"BSc Urban and Regional Planning",      years:4 },
-];
+const YEARBOOK_MODULES = {
+  "12130019": {
+    name: "BEng Computer Engineering",
+    years: 4,
+    modules: {
+      "1": [
+        {code:"COS110", name:"Program design: Introduction"},
+        {code:"COS122", name:"Operating systems"},
+        {code:"COS132", name:"Imperative programming"},
+        {code:"EBN111", name:"Electricity and electronics"},
+        {code:"EIW121", name:"Information technology practice"},
+        {code:"FSK116", name:"Physics"},
+        {code:"JSU110", name:"Introduction to sustainable engineering I"},
+        {code:"JSU120", name:"Introduction to sustainable engineering II"},
+        {code:"SWK122", name:"Statics"},
+        {code:"WTW158", name:"Calculus"},
+        {code:"WTW164", name:"Mathematics"},
+      ],
+      "2": [
+        {code:"BES220", name:"Engineering statistics"},
+        {code:"COS212", name:"Data structures and algorithms"},
+        {code:"EIR211", name:"Electrical engineering"},
+        {code:"EIW221", name:"Information technology practice"},
+        {code:"EJJ210", name:"Professional and technical communication"},
+        {code:"ELI220", name:"Linear systems"},
+        {code:"EMR201", name:"Introduction to programming and computer simulations"},
+        {code:"ERS220", name:"Digital systems"},
+        {code:"JCP203", name:"Community-based project"},
+        {code:"NMC113", name:"Materials science"},
+        {code:"WTW238", name:"Mathematics"},
+        {code:"WTW256", name:"Differential equations"},
+        {code:"WTW258", name:"Calculus"},
+        {code:"WTW263", name:"Numerical methods"},
+      ],
+      "3": [
+        {code:"BSS310", name:"Engineering management"},
+        {code:"EAI320", name:"Intelligent systems"},
+        {code:"EBB320", name:"Control systems"},
+        {code:"EDC310", name:"Digital communication"},
+        {code:"EIW320", name:"Information technology practice"},
+        {code:"EME310", name:"Electromagnetic compatibility"},
+        {code:"EMK310", name:"Microprocessors"},
+        {code:"ENE310", name:"Analogue electronics"},
+        {code:"EPE321", name:"Software engineering"},
+        {code:"ERD320", name:"Computer engineering design"},
+        {code:"MIA320", name:"Engineering activity and group work"},
+      ],
+      "final": [
+        {code:"EAS410", name:"Computer engineering: Architecture and systems"},
+        {code:"EPY423", name:"Practical training and report"},
+        {code:"ERP420", name:"Research project"},
+        {code:"ESP411", name:"DSP programming and application"},
+        {code:"IPI410", name:"Engineering professionalism"},
+        {code:"EHN410", name:"e-Business and network security (elective)"},
+        {code:"EBI410", name:"Biomedical Engineering (elective)"},
+        {code:"ERB410", name:"Robotics (elective)"},
+      ],
+    },
+  },
+  "12136012": {
+    name: "BEng Chemical Engineering (5-year)",
+    years: 5,
+    modules: {
+      "1": [
+        {code:"CHM171", name:"General chemistry"},
+        {code:"FSK176", name:"Physics"},
+        {code:"JPO110", name:"Professional orientation"},
+        {code:"JPO111", name:"Additional chemistry 1"},
+        {code:"JPO116", name:"Additional mathematics 1"},
+        {code:"JPO120", name:"Professional orientation"},
+        {code:"JPO122", name:"Additional physics"},
+        {code:"JPO126", name:"Additional mathematics 2"},
+        {code:"JSU110", name:"Introduction to sustainable engineering I"},
+        {code:"JSU120", name:"Introduction to sustainable engineering II"},
+        {code:"WTW158", name:"Calculus"},
+        {code:"WTW164", name:"Mathematics"},
+        {code:"WWP121", name:"Workshop practice"},
+      ],
+      "2": [
+        {code:"CHM181", name:"General chemistry"},
+        {code:"CIR113", name:"Chemical engineering"},
+        {code:"CIR123", name:"Chemical engineering"},
+        {code:"EBN111", name:"Electricity and electronics"},
+        {code:"JCP203", name:"Community-based project"},
+        {code:"JPO112", name:"Additional electricity and electronics"},
+        {code:"JPO113", name:"Additional engineering design tools"},
+        {code:"JPO121", name:"Additional chemistry 2"},
+        {code:"JPO125", name:"Additional statics"},
+        {code:"MGC110", name:"Engineering design tools"},
+        {code:"SWK122", name:"Statics"},
+        {code:"WTW258", name:"Calculus"},
+        {code:"WTW263", name:"Numerical methods"},
+      ],
+      "3": [
+        {code:"BES220", name:"Engineering statistics"},
+        {code:"CHM215", name:"Chemistry"},
+        {code:"CHM226", name:"Chemistry"},
+        {code:"CIM211", name:"Chemical engineering materials"},
+        {code:"CIR211", name:"Chemical engineering"},
+        {code:"CTD223", name:"Thermodynamics"},
+        {code:"EIR221", name:"Electrical engineering"},
+        {code:"MPR213", name:"Programming and information technology"},
+        {code:"WTW238", name:"Mathematics"},
+        {code:"WTW256", name:"Differential equations"},
+      ],
+      "4": [
+        {code:"BSS310", name:"Engineering management"},
+        {code:"CBI310", name:"Biochemical engineering"},
+        {code:"CIO320", name:"Chemical engineering design"},
+        {code:"CIR310", name:"Chemical engineering"},
+        {code:"CJJ310", name:"Professional and technical communication"},
+        {code:"CKN321", name:"Kinetics"},
+        {code:"CLB321", name:"Laboratory"},
+        {code:"CMO310", name:"Mass transfer"},
+        {code:"COP311", name:"Transfer processes"},
+        {code:"CPN321", name:"Process dynamics"},
+        {code:"CPY311", name:"Practical training"},
+        {code:"MIA320", name:"Engineering activity and group work"},
+      ],
+      "final": [
+        {code:"CPA410", name:"Particle technology"},
+        {code:"CPB410", name:"Process control"},
+        {code:"CPJ421", name:"Design project"},
+        {code:"CPR420", name:"Chemical engineering practice"},
+        {code:"CPS410", name:"Process synthesis"},
+        {code:"CPS420", name:"Process analysis"},
+        {code:"CPY411", name:"Practical training"},
+        {code:"CRO410", name:"Reactor design"},
+        {code:"CSC411", name:"Research project"},
+        {code:"CSC421", name:"Research project"},
+      ],
+    },
+  },
+  "12130031": {
+    name: "BEng Electrical Engineering",
+    years: 4,
+    modules: {
+      "1": [
+        {code:"EBN111", name:"Electricity and electronics"},
+        {code:"FSK116", name:"Physics"},
+        {code:"JSU110", name:"Introduction to sustainable engineering I"},
+        {code:"JSU120", name:"Introduction to sustainable engineering II"},
+        {code:"SWK122", name:"Statics"},
+        {code:"WTW158", name:"Calculus"},
+        {code:"WTW164", name:"Mathematics"},
+      ],
+      "2": [
+        {code:"BES220", name:"Engineering statistics"},
+        {code:"EIR211", name:"Electrical engineering"},
+        {code:"ELI220", name:"Linear systems"},
+        {code:"ERS220", name:"Digital systems"},
+        {code:"JCP203", name:"Community-based project"},
+        {code:"NMC113", name:"Materials science"},
+        {code:"WTW238", name:"Mathematics"},
+        {code:"WTW256", name:"Differential equations"},
+        {code:"WTW258", name:"Calculus"},
+        {code:"WTW263", name:"Numerical methods"},
+      ],
+      "3": [
+        {code:"BSS310", name:"Engineering management"},
+        {code:"EBB320", name:"Control systems"},
+        {code:"EDC310", name:"Digital communication"},
+        {code:"EME310", name:"Electromagnetic compatibility"},
+        {code:"EMK310", name:"Microprocessors"},
+        {code:"ENE310", name:"Analogue electronics"},
+        {code:"MIA320", name:"Engineering activity and group work"},
+      ],
+      "final": [
+        {code:"EAS410", name:"Architecture and systems"},
+        {code:"IPI410", name:"Engineering professionalism"},
+        {code:"ERP420", name:"Research project"},
+      ],
+    },
+  },
+  "12130181": {
+    name: "BEng Mechanical Engineering",
+    years: 4,
+    modules: {
+      "1": [
+        {code:"FSK116", name:"Physics"},
+        {code:"JSU110", name:"Introduction to sustainable engineering I"},
+        {code:"JSU120", name:"Introduction to sustainable engineering II"},
+        {code:"MGC110", name:"Engineering design tools"},
+        {code:"SWK122", name:"Statics"},
+        {code:"WTW158", name:"Calculus"},
+        {code:"WTW164", name:"Mathematics"},
+      ],
+      "2": [
+        {code:"BES220", name:"Engineering statistics"},
+        {code:"EBN111", name:"Electricity and electronics"},
+        {code:"JCP203", name:"Community-based project"},
+        {code:"NMC113", name:"Materials science"},
+        {code:"WTW238", name:"Mathematics"},
+        {code:"WTW256", name:"Differential equations"},
+        {code:"WTW258", name:"Calculus"},
+        {code:"WTW263", name:"Numerical methods"},
+      ],
+      "3": [
+        {code:"BSS310", name:"Engineering management"},
+        {code:"MIA320", name:"Engineering activity and group work"},
+      ],
+      "final": [
+        {code:"IPI410", name:"Engineering professionalism"},
+      ],
+    },
+  },
+};
+
+// ─── Degree list for picker ────────────────────────────────────────────────────
+const EBIT_DEGREES = Object.entries(YEARBOOK_MODULES).map(([code, d]) => ({
+  code, name: d.name, years: d.years
+}));
+
+// ─── Get modules for a degree + year from static JSON ─────────────────────────
+function getModulesForYear(degreeCode, yearNum) {
+  const deg = YEARBOOK_MODULES[degreeCode];
+  if (!deg) return [];
+  const key = String(yearNum);
+  return deg.modules[key] ?? deg.modules["final"] ?? [];
+}
 
 const MODULE_COLORS_POOL = ["#7C6AF7","#F76A6A","#4ECDC4","#F7A84A","#A8E063","#F76AD3","#6AABF7","#F7D76A"];
-
-// ─── Scrape yearbook for a degree + year ─────────────────────────────────────
-// UP yearbook HTML has module entries like:
-//   [EBN 111\n\n  Electricity and electronics 111\n\n  Credits: 16.00](#module-01-5)
-// Year anchors: module-01 (yr1), module-02 (yr2), module-03 (yr3),
-//               module-04 (yr4), module-FIN (final year)
-
-async function scrapeYearbookModules(degreeCode, yearNum) {
-  const url = `https://www.up.ac.za/yearbooks/2026/EBIT-faculty/UD-programmes/view/${degreeCode}`;
-  const proxies = [
-    `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-    `https://corsproxy.io/?${encodeURIComponent(url)}`,
-  ];
-
-  let html = null;
-  for (const proxy of proxies) {
-    try {
-      const r = await fetch(proxy, { signal: AbortSignal.timeout(9000) });
-      if (!r.ok) continue;
-      const ct = r.headers.get("content-type") || "";
-      if (ct.includes("json")) {
-        const j = await r.json();
-        html = j?.contents;
-      } else {
-        html = await r.text();
-      }
-      if (html && html.includes("module-")) break;
-      html = null;
-    } catch(e) { continue; }
-  }
-
-  if (!html) return [];
-
-  // Normalise line endings
-  html = html.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-
-  // Build anchor prefix for year
-  const anchorMap = { "1":"01", "2":"02", "3":"03", "4":"04", "final":"FIN",
-                       1:"01",   2:"02",   3:"03",   4:"04" };
-  const anchor = anchorMap[yearNum] ?? "01";
-
-  // Match: [XXX 123\n\n  Full name 123\n\n  Credits: N.NN](#module-ANC-N)
-  // We build the pattern as a string to inject the anchor
-  const pat = new RegExp(
-    "\\[([A-Z]{2,4}\\s\\d{3})\\n\\n\\s+(.+?)\\n\\n\\s+Credits:[^\\n]+\\]\\(#module-" + anchor + "-\\d+\\)",
-    "g"
-  );
-
-  const mods = [];
-  const seen = new Set();
-  let m;
-  while ((m = pat.exec(html)) !== null) {
-    const code = m[1].replace(/\s/, "");           // "EBN 111" → "EBN111"
-    const name = m[2].trim().replace(/\s+\d{3}$/, ""); // strip trailing "111"
-    if (!seen.has(code) && name.length > 2) {
-      seen.add(code);
-      mods.push({ code, name });
-    }
-  }
-  return mods;
-}
 
 // ─── Login Screen ──────────────────────────────────────────────────────────────
 function LoginScreen({ onSwitchToSignup }) {
@@ -1453,21 +1592,12 @@ function OnboardingScreen({ session, onComplete }) {
   );
 
   const scrape = async () => {
-    setStep(3); setLoading(true); setError("");
-    const mods = await scrapeYearbookModules(degree.code, year);
-    if (mods.length === 0) {
-      setError("Couldn't load modules from UP Yearbook. You can add them manually after setup.");
-      // Still proceed with empty list
-      setModules([]);
-      const sel = {};
-      setSelected(sel);
-    } else {
-      setModules(mods);
-      const sel = {};
-      mods.forEach(m => { sel[m.code] = true; }); // select all by default
-      setSelected(sel);
-    }
-    setLoading(false);
+    // Instant lookup from static JSON — skip step 3 loading screen
+    const mods = getModulesForYear(degree.code, year);
+    setModules(mods);
+    const sel = {};
+    mods.forEach(m => { sel[m.code] = true; });
+    setSelected(sel);
     setStep(4);
   };
 
